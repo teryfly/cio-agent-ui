@@ -78,6 +78,37 @@ const emptyConfig = (): ProjectConfig => ({
   git: { enabled: false },
 })
 
+/**
+ * Build a ProjectConfig pre-filled with values from the global system config.
+ * This is what gets shown when a project has no per-project config yet.
+ *
+ * Current source of defaults:
+ *  - model            ← global config.model
+ *  - llm_url          ← (not in global config, left empty)
+ *  - temperature      ← hardcoded 0.7  (global config has no temperature field)
+ *  - max_tokens       ← hardcoded 4096 (global config has no max_tokens field)
+ *  - timeout          ← hardcoded 300  (global config has no timeout field)
+ *  - validation.*     ← global config.validation.validate_after_run / max_fix_rounds
+ *  - git.enabled      ← hardcoded false (global config has no git field)
+ */
+function buildDefaultsFromGlobal(global: {
+  model?: string
+  validation?: { validate_after_run?: boolean; max_fix_rounds?: number }
+}): ProjectConfig {
+  return {
+    model:       global.model ?? '',
+    llm_url:     '',
+    temperature: 0.7,
+    max_tokens:  4096,
+    timeout:     300,
+    validation: {
+      validate_after_run: global.validation?.validate_after_run ?? false,
+      max_fix_rounds:     global.validation?.max_fix_rounds ?? 3,
+    },
+    git: { enabled: false },
+  }
+}
+
 /* ── Main Page ───────────────────────────────────────────────────────────── */
 export default function ProjectConfigPage() {
   const { solutionId, projectId } = useParams<{ solutionId: string; projectId: string }>()
@@ -90,7 +121,12 @@ export default function ProjectConfigPage() {
   const [saving,        setSaving]        = useState(false)
   const [resetConfirm,  setResetConfirm]  = useState(false)
   const [resetLoading,  setResetLoading]  = useState(false)
-  const [isDefault,     setIsDefault]     = useState(false)    // showing system defaults
+  /**
+   * isDefault = true means "no project-specific config exists yet;
+   * we're pre-filling from the system global config so the user sees
+   * meaningful values instead of all-empty fields."
+   */
+  const [isDefault,     setIsDefault]     = useState(false)
   const [projectName,   setProjectName]   = useState('')
 
   const sid = solutionId!
@@ -100,7 +136,7 @@ export default function ProjectConfigPage() {
     const load = async () => {
       setLoading(true)
       try {
-        // Try to load project config
+        // ── Happy path: project already has its own config ────────────────
         const res = await projectsApi.getConfig(sid, pid)
         setProjectName(res.project_name)
         const merged = { ...emptyConfig(), ...res.config }
@@ -108,31 +144,23 @@ export default function ProjectConfigPage() {
         setOriginal(merged)
         setIsDefault(false)
       } catch (err: unknown) {
-        const code = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
-        if (code === 'config_not_found' || (err as { response?: { status?: number } })?.response?.status === 404) {
-          // No config yet – fill with system defaults if admin
-          if (isAdmin) {
-            try {
-              const global = await configApi.get()
-              const filled: ProjectConfig = {
-                model:       global.model,
-                temperature: 0.7,
-                max_tokens:  4096,
-                timeout:     300,
-                llm_url:     '',
-                validation: {
-                  validate_after_run: global.validation?.validate_after_run ?? false,
-                  max_fix_rounds:     global.validation?.max_fix_rounds ?? 3,
-                },
-                git: { enabled: false },
-              }
-              setConfig(filled)
-              setOriginal(emptyConfig())
-              setIsDefault(true)
-            } catch {
-              setIsDefault(true)
-            }
-          } else {
+        const status = (err as { response?: { status?: number } })?.response?.status
+        const code   = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+
+        if (code === 'config_not_found' || status === 404) {
+          // ── No per-project config yet: fill from system global config ────
+          // We always try to get the global config regardless of admin status
+          // so the form shows real system defaults instead of hard-coded zeros.
+          try {
+            const global = await configApi.get()
+            const defaults = buildDefaultsFromGlobal(global)
+            setConfig(defaults)
+            setOriginal(emptyConfig())  // original stays "empty" so isDirty works correctly
+            setIsDefault(true)
+          } catch {
+            // If global config fetch also fails, fall back to hard-coded empty defaults
+            setConfig(emptyConfig())
+            setOriginal(emptyConfig())
             setIsDefault(true)
           }
         } else {
@@ -143,7 +171,7 @@ export default function ProjectConfigPage() {
       }
     }
     load()
-  }, [sid, pid, isAdmin])
+  }, [sid, pid]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSave = async () => {
     setSaving(true)
@@ -160,22 +188,10 @@ export default function ProjectConfigPage() {
   }
 
   const handleReset = async () => {
-    if (!isAdmin) return
     setResetLoading(true)
     try {
       const global = await configApi.get()
-      const reset: ProjectConfig = {
-        model:       global.model,
-        temperature: 0.7,
-        max_tokens:  4096,
-        timeout:     300,
-        llm_url:     '',
-        validation: {
-          validate_after_run: global.validation?.validate_after_run ?? false,
-          max_fix_rounds:     global.validation?.max_fix_rounds ?? 3,
-        },
-        git: { enabled: false },
-      }
+      const reset  = buildDefaultsFromGlobal(global)
       await projectsApi.patchConfig(sid, pid, reset)
       setConfig(reset)
       setOriginal(reset)
@@ -229,9 +245,7 @@ export default function ProjectConfigPage() {
       {/* Default-fill notice */}
       {isDefault && (
         <div className="mb-5 bg-amber-500/10 border border-amber-500/30 rounded-lg px-4 py-3 text-xs text-amber-400">
-          {isAdmin
-            ? '当前未设置独立配置，显示的是系统默认值，保存后生效。'
-            : '将使用系统默认配置，填写后可覆盖特定字段。'}
+          当前未设置独立配置，已自动填入系统默认值作为参考，保存后将作为此项目的独立配置生效。
         </div>
       )}
 

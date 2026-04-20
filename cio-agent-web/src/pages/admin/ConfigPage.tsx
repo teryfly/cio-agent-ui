@@ -74,6 +74,23 @@ function Section({ title }: { title: string }) {
   )
 }
 
+/* ── Read-only fields that must NOT be sent back to the server ───────────── */
+const READ_ONLY_FIELDS = ['config_file_path'] as const
+
+/**
+ * Strip read-only fields before sending to PUT /config/ or POST /config/validate.
+ * The server only accepts:
+ *   model, api_key, file_limit, work_dir, claude_alias, models,
+ *   validation, architect_prompt, engineer_prompt
+ */
+function sanitizeConfigPayload(config: Partial<GlobalConfig>): Partial<GlobalConfig> {
+  const payload = { ...config }
+  for (const field of READ_ONLY_FIELDS) {
+    delete (payload as Record<string, unknown>)[field]
+  }
+  return payload
+}
+
 /* ── S4C info panel ──────────────────────────────────────────────────────── */
 
 function S4CPanel() {
@@ -181,7 +198,8 @@ export default function ConfigPage() {
   const handleSave = async () => {
     setSaving(true)
     try {
-      await configApi.update(config as GlobalConfig)
+      // Strip read-only fields before sending
+      await configApi.update(sanitizeConfigPayload(config) as GlobalConfig)
       toast.success('配置已保存')
       setValidateResult(null)
     } catch {
@@ -194,7 +212,8 @@ export default function ConfigPage() {
   const handleValidate = async () => {
     setValidating(true)
     try {
-      const res = await configApi.validate(config as GlobalConfig)
+      // Strip read-only fields before sending
+      const res = await configApi.validate(sanitizeConfigPayload(config) as GlobalConfig)
       setValidateResult({ shown: true, errors: res.errors })
     } catch {
       toast.error('验证请求失败')

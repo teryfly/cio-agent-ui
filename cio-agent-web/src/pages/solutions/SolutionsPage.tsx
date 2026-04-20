@@ -2,13 +2,14 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { solutionsApi } from '../../api/solutions'
+import { projectsApi  } from '../../api/projects'
 import { useAppStore } from '../../store/appStore'
-import type { Solution, Visibility } from '../../api/types'
+import type { Solution, Project, Visibility } from '../../api/types'
 import Button from '../../components/ui/Button'
 import Modal from '../../components/ui/Modal'
 import ConfirmDialog from '../../components/ui/ConfirmDialog'
 import EmptyState from '../../components/ui/EmptyState'
-import { VisibilityBadge } from '../../components/ui/StatusBadge'
+import { StatusBadge, TypeBadge, VisibilityBadge } from '../../components/ui/StatusBadge'
 
 /* ── New/Edit Solution Modal ──────────────────────────────────────────────── */
 function SolutionFormModal({
@@ -111,13 +112,43 @@ function SolutionFormModal({
   )
 }
 
+/* ── Project mini-row inside card ─────────────────────────────────────────── */
+function ProjectMiniRow({
+  project,
+  solutionId,
+}: {
+  project: Project
+  solutionId: string
+}) {
+  const navigate = useNavigate()
+  return (
+    <div
+      className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-surface-3 cursor-pointer transition-colors group"
+      onClick={(e) => {
+        e.stopPropagation()
+        navigate(`/solutions/${solutionId}/projects/${project.id}`)
+      }}
+    >
+      <StatusBadge status={project.status as 'idle' | 'running' | 'success' | 'failed'} />
+      <TypeBadge type={project.type} />
+      <span className="text-xs text-gray-300 flex-1 truncate group-hover:text-gray-100 transition-colors">
+        {project.name}
+      </span>
+    </div>
+  )
+}
+
 /* ── Solution Card ────────────────────────────────────────────────────────── */
 function SolutionCard({
   sol,
+  projects,
+  projectsLoading,
   onEdit,
   onDelete,
 }: {
   sol: Solution
+  projects: Project[]
+  projectsLoading: boolean
   onEdit: (s: Solution) => void
   onDelete: (s: Solution) => void
 }) {
@@ -161,8 +192,23 @@ function SolutionCard({
         </div>
       </div>
 
-      <div className="flex items-center gap-3 text-xs text-gray-500">
-        <span>📁 {sol.project_count} 个项目</span>
+      {/* ── Project list ───────────────────────────────────────────────── */}
+      <div className="flex-1 min-h-0">
+        {projectsLoading ? (
+          <div className="space-y-1">
+            {[...Array(Math.min(sol.project_count || 2, 3))].map((_, i) => (
+              <div key={i} className="h-6 bg-surface-3 rounded animate-pulse" />
+            ))}
+          </div>
+        ) : projects.length === 0 ? (
+          <p className="text-xs text-gray-600 py-1">暂无项目</p>
+        ) : (
+          <div className="space-y-0.5 max-h-32 overflow-y-auto">
+            {projects.map((p) => (
+              <ProjectMiniRow key={p.id} project={p} solutionId={sol.id} />
+            ))}
+          </div>
+        )}
       </div>
 
       <Button
@@ -171,7 +217,7 @@ function SolutionCard({
         className="w-full justify-center mt-auto"
         onClick={() => navigate(`/solutions/${sol.id}`)}
       >
-        进入
+        进入 →
       </Button>
     </div>
   )
@@ -186,10 +232,39 @@ export default function SolutionsPage() {
   const [delTarget, setDelTarget] = useState<Solution | null>(null)
   const [delLoading, setDelLoading] = useState(false)
 
+  /**
+   * projectsMap: solutionId → Project[]
+   * Populated by fetching GET /solutions/{sid}/projects/ for every solution
+   * in parallel after the solution list loads.
+   */
+  const [projectsMap,     setProjectsMap]     = useState<Record<string, Project[]>>({})
+  const [projectsLoading, setProjectsLoading] = useState(false)
+
   const load = () => {
     setLoading(true)
     solutionsApi.list()
-      .then((d) => setSolutions(d.solutions))
+      .then((d) => {
+        setSolutions(d.solutions)
+        return d.solutions
+      })
+      .then((sols) => {
+        // After the solution list is ready, concurrently fetch each solution's projects
+        if (sols.length === 0) return
+        setProjectsLoading(true)
+        Promise.allSettled(
+          sols.map((sol) =>
+            projectsApi.list(sol.id).then((r) => ({ id: sol.id, projects: r.projects }))
+          )
+        ).then((results) => {
+          const map: Record<string, Project[]> = {}
+          for (const result of results) {
+            if (result.status === 'fulfilled') {
+              map[result.value.id] = result.value.projects
+            }
+          }
+          setProjectsMap(map)
+        }).finally(() => setProjectsLoading(false))
+      })
       .catch(() => toast.error('加载失败'))
       .finally(() => setLoading(false))
   }
@@ -233,7 +308,7 @@ export default function SolutionsPage() {
       {loading ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {[...Array(3)].map((_, i) => (
-            <div key={i} className="bg-surface-1 border border-border rounded-xl p-5 h-36 animate-pulse" />
+            <div key={i} className="bg-surface-1 border border-border rounded-xl p-5 h-52 animate-pulse" />
           ))}
         </div>
       ) : solutions.length === 0 ? (
@@ -253,6 +328,8 @@ export default function SolutionsPage() {
             <SolutionCard
               key={sol.id}
               sol={sol}
+              projects={projectsMap[sol.id] ?? []}
+              projectsLoading={projectsLoading && !(sol.id in projectsMap)}
               onEdit={(s) => { setEditing(s); setModalOpen(true) }}
               onDelete={setDelTarget}
             />
