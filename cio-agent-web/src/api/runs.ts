@@ -32,6 +32,15 @@ export const runsApi = {
       .post<RunResponse>(`/solutions/${sid}/projects/${pid}/runs/secondary`, data)
       .then((r) => r.data),
 
+  /**
+   * v2.1: Auto-routing run — server decides new vs secondary based on project.last_run_at.
+   * Recommended for UI "Run" buttons that don't need to distinguish first vs subsequent runs.
+   */
+  autoRun: (sid: UUID, pid: UUID, data: NewRunRequest) =>
+    apiClient
+      .post<RunResponse>(`/solutions/${sid}/projects/${pid}/runs/auto`, data)
+      .then((r) => r.data),
+
   validateRun: (
     sid: UUID,
     pid: UUID,

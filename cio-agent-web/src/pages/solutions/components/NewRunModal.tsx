@@ -8,10 +8,16 @@ import type { KnowledgeDocument, LogLevel, UUID } from '../../../api/types'
 import Modal  from '../../../components/ui/Modal'
 import Button from '../../../components/ui/Button'
 
-/* ── Types ─────────────────────────────────────────────────────────────── */
+// ─── Types ──────────────────────────────────────────────────────────────────
 
 type KnowledgeMode = 'all' | 'whitelist' | 'skip'
-type RunVariant    = 'new' | 'secondary'
+
+/**
+ * v2.1: variant is kept for UI labeling purposes only.
+ * The actual API call always uses runs/auto which auto-routes
+ * between new/secondary based on project.last_run_at server-side.
+ */
+type RunVariant = 'new' | 'secondary'
 
 interface Props {
   open:        boolean
@@ -24,7 +30,7 @@ interface Props {
   onLaunched?: (runId: string) => void
 }
 
-/* ── Knowledge Selector ─────────────────────────────────────────────────── */
+// ─── Knowledge Selector ─────────────────────────────────────────────────────
 
 function KnowledgeSelector({
   solutionId,
@@ -47,10 +53,12 @@ function KnowledgeSelector({
   useEffect(() => {
     if (mode !== 'whitelist') return
     setLoading(true)
-    knowledgeApi.listByProject(solutionId, projectId, true)
+    // v2.1: use the dedicated /selectable endpoint which returns all docs
+    // (solution + project scope) with deduplication done server-side.
+    knowledgeApi.selectableByProject(solutionId, projectId)
       .then((d) => {
         setDocs(d.documents)
-        // Default: select all
+        // Default: select all docs in whitelist mode
         onSelectedChange(new Set(d.documents.map((doc) => doc.id)))
       })
       .catch(() => {})
@@ -154,7 +162,7 @@ function KnowledgeSelector({
   )
 }
 
-/* ── Advanced Options ───────────────────────────────────────────────────── */
+// ─── Advanced Options ────────────────────────────────────────────────────────
 
 function AdvancedOptions({
   validate,
@@ -231,7 +239,7 @@ function AdvancedOptions({
   )
 }
 
-/* ── Main Modal ─────────────────────────────────────────────────────────── */
+// ─── Main Modal ──────────────────────────────────────────────────────────────
 
 export default function NewRunModal({
   open, onClose, solutionId, projectId, projectName, variant = 'new', onLaunched,
@@ -258,6 +266,12 @@ export default function NewRunModal({
     }
   }, [open])
 
+  /**
+   * Resolve knowledge_doc_ids per v2.1 semantics:
+   * - all mode  → null  (server auto-aggregates all bound docs)
+   * - skip mode → []    (no knowledge context injected)
+   * - whitelist → [id…] (only selected doc ids)
+   */
   const resolveKnowledgeDocIds = (): UUID[] | null => {
     if (knowledgeMode === 'all')  return null
     if (knowledgeMode === 'skip') return []
@@ -271,8 +285,9 @@ export default function NewRunModal({
     }
     setLoading(true)
     try {
-      const fn = variant === 'new' ? runsApi.newRun : runsApi.secondaryRun
-      const res = await fn(solutionId, projectId, {
+      // v2.1: always use autoRun — server routes to new/secondary automatically
+      // based on project.last_run_at, so the UI doesn't need to track that state.
+      const res = await runsApi.autoRun(solutionId, projectId, {
         requirement:       draft.trim(),
         validate,
         fix_rounds:        validate ? fixRounds : null,
@@ -290,14 +305,16 @@ export default function NewRunModal({
     } catch (err: unknown) {
       const code = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
       if (code === 'project_locked') toast.error('项目正在执行中，请稍后再试')
+      else if (code === 'workflow_already_running') toast.error('该项目已有运行中的任务，请稍后再试')
       else toast.error('启动失败')
     } finally {
       setLoading(false)
     }
   }
 
+  // Title reflects variant for UI clarity even though both use auto API
   const title = variant === 'new'
-    ? `🚀 启动新任务 — ${projectName}`
+    ? `🚀 启动任务 — ${projectName}`
     : `↺ 二次开发 — ${projectName}`
 
   const charCount = draft.length
@@ -342,7 +359,7 @@ export default function NewRunModal({
           <div className="flex-1 h-px bg-border" />
         </div>
 
-        {/* Knowledge selector */}
+        {/* Knowledge selector — v2.1: uses /selectable endpoint */}
         <KnowledgeSelector
           solutionId={solutionId}
           projectId={projectId}

@@ -18,7 +18,7 @@ interface Props {
   solutionName: string
 }
 
-/* ── Project Selector ───────────────────────────────────────────────────── */
+// ─── Project Selector ────────────────────────────────────────────────────────
 
 function ProjectSelector({
   projects,
@@ -81,7 +81,7 @@ function ProjectSelector({
   )
 }
 
-/* ── Inline Knowledge Selector (shared with NewRunModal) ────────────────── */
+// ─── Knowledge Selector ──────────────────────────────────────────────────────
 
 function InlineKnowledgeSelector({
   solutionId,
@@ -175,7 +175,7 @@ function InlineKnowledgeSelector({
   )
 }
 
-/* ── Main Modal ─────────────────────────────────────────────────────────── */
+// ─── Main Modal ──────────────────────────────────────────────────────────────
 
 export default function OrchestrationModal({ open, onClose, solutionId, solutionName }: Props) {
   const navigate = useNavigate()
@@ -184,7 +184,12 @@ export default function OrchestrationModal({ open, onClose, solutionId, solution
 
   const [projects,     setProjects]     = useState<Project[]>([])
   const [selectedProj, setSelectedProj] = useState<Set<UUID>>(new Set())
-  const [userAdjusted, setUserAdjusted] = useState(false)  // true → send explicit array
+  /**
+   * v2.1: userAdjusted tracks whether the user has manually changed project selection.
+   * - false (initial default-all state) → send null (server applies max_projects limit)
+   * - true  (user explicitly toggled)   → send explicit array (no max_projects limit)
+   */
+  const [userAdjusted, setUserAdjusted] = useState(false)
 
   const [kMode,        setKMode]        = useState<KnowledgeMode>('all')
   const [selectedDocs, setSelectedDocs] = useState<Set<UUID>>(new Set())
@@ -200,7 +205,7 @@ export default function OrchestrationModal({ open, onClose, solutionId, solution
       .then((d) => {
         setProjects(d.projects)
         setSelectedProj(new Set(d.projects.map((p) => p.id)))
-        setUserAdjusted(false)
+        setUserAdjusted(false)  // reset: default all-selected = null semantics
       })
       .catch(() => {})
       .finally(() => setProjLoading(false))
@@ -211,17 +216,28 @@ export default function OrchestrationModal({ open, onClose, solutionId, solution
     if (next.has(id)) next.delete(id)
     else              next.add(id)
     setSelectedProj(next)
-    setUserAdjusted(true)
+    setUserAdjusted(true)  // user explicitly changed selection → send array
   }
 
+  /**
+   * v2.1 project_ids semantics:
+   * - null      → server pulls all projects for solution, subject to max_projects cap
+   * - UUID[]    → only these projects participate, NOT subject to max_projects cap
+   */
   const resolveProjectIds = (): UUID[] | null => {
     if (!userAdjusted) return null
     return Array.from(selectedProj)
   }
 
+  /**
+   * v2.1 knowledge_doc_ids semantics:
+   * - null → full mode: server auto-aggregates all bound docs
+   * - []   → skip: no knowledge context
+   * - [...] → whitelist: only these doc ids
+   */
   const resolveKnowledgeDocIds = (): UUID[] | null => {
-    if (kMode === 'all')       return null
-    if (kMode === 'skip')      return []
+    if (kMode === 'all')  return null
+    if (kMode === 'skip') return []
     return Array.from(selectedDocs)
   }
 
@@ -249,6 +265,7 @@ export default function OrchestrationModal({ open, onClose, solutionId, solution
     } catch (err: unknown) {
       const code = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
       if (code === 'project_locked') toast.error('有项目正在执行中，请稍后再试')
+      else if (code === 'project_not_in_solution') toast.error('部分选中的项目不属于此 Solution')
       else toast.error('启动失败')
     } finally {
       setLoading(false)
@@ -299,6 +316,7 @@ export default function OrchestrationModal({ open, onClose, solutionId, solution
             />
           )}
 
+          {/* v2.1: show note only when user has explicitly adjusted selection */}
           {userAdjusted && (
             <p className="text-[11px] text-teal-400 mt-1.5">
               ⚠ 显式勾选的项目不受服务端 max_projects 限制

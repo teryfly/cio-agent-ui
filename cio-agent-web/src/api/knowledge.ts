@@ -31,4 +31,14 @@ export const knowledgeApi = {
       `/solutions/${sid}/projects/${pid}/knowledge/`,
       { params: { include_solution: includesolution } }
     ).then((r) => r.data),
+
+  /**
+   * v2.1: Get selectable documents for the knowledge picker in the Run modal.
+   * Returns all documents (solution + project scope) with a `scope` field
+   * indicating their origin. Deduplicates automatically server-side.
+   */
+  selectableByProject: (sid: UUID, pid: UUID) =>
+    apiClient.get<{ documents: KnowledgeDocument[]; total: number }>(
+      `/solutions/${sid}/projects/${pid}/knowledge/selectable`
+    ).then((r) => r.data),
 }
