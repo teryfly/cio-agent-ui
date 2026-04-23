@@ -8,64 +8,7 @@ import type { ProjectConfig } from '../../api/types'
 import Button        from '../../components/ui/Button'
 import ConfirmDialog from '../../components/ui/ConfirmDialog'
 import PageHeader    from '../../components/ui/PageHeader'
-
-/* ── Input wrappers ──────────────────────────────────────────────────────── */
-function Field({
-  label, hint, children,
-}: { label: string; hint?: string; children: React.ReactNode }) {
-  return (
-    <div className="grid grid-cols-[200px_1fr] items-start gap-4">
-      <div className="pt-2">
-        <p className="text-sm text-gray-300">{label}</p>
-        {hint && <p className="text-[11px] text-gray-500 mt-0.5">{hint}</p>}
-      </div>
-      <div>{children}</div>
-    </div>
-  )
-}
-
-function TextInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
-  return (
-    <input
-      {...props}
-      className="w-full max-w-md bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500/50 disabled:opacity-50"
-    />
-  )
-}
-
-function Toggle({
-  checked, onChange, label,
-}: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
-  return (
-    <label className="flex items-center gap-3 cursor-pointer select-none">
-      <div
-        onClick={() => onChange(!checked)}
-        className={`relative w-9 h-5 rounded-full transition-colors ${
-          checked ? 'bg-brand-600' : 'bg-surface-4'
-        }`}
-      >
-        <div
-          className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${
-            checked ? 'translate-x-4' : 'translate-x-0'
-          }`}
-        />
-      </div>
-      <span className="text-sm text-gray-300">{label}</span>
-    </label>
-  )
-}
-
-/* ── Section heading ─────────────────────────────────────────────────────── */
-function Section({ title }: { title: string }) {
-  return (
-    <div className="flex items-center gap-3 py-4 border-t border-border first:border-t-0 first:pt-0">
-      <span className="text-xs font-semibold text-gray-500 uppercase tracking-widest whitespace-nowrap">
-        {title}
-      </span>
-      <div className="flex-1 h-px bg-border" />
-    </div>
-  )
-}
+import ConfigForm    from '../../components/config/ConfigForm'
 
 /* ── Default config ──────────────────────────────────────────────────────── */
 const emptyConfig = (): ProjectConfig => ({
@@ -74,38 +17,55 @@ const emptyConfig = (): ProjectConfig => ({
   temperature: 0.7,
   max_tokens: 4096,
   timeout: 300,
-  validation: { validate_after_run: false, max_fix_rounds: 3 },
+  file_limit: 30,
+  architect_prompt: '',
+  engineer_prompt: '',
+  models: {},
+  validation: {
+    validate_after_run: false,
+    max_fix_rounds: 3,
+    model: '',
+    step_filter: null,
+    stdout_preview_limit: 200000,
+    target_coverage: 80,
+  },
+  claude_md: { enabled: true, model: '', memory_model: '' },
   git: { enabled: false },
+  execution_context_max_turns: 10,
+  execution_context_content_limit: 500,
 })
 
-/**
- * Build a ProjectConfig pre-filled with values from the global system config.
- * This is what gets shown when a project has no per-project config yet.
- *
- * Current source of defaults:
- *  - model            ← global config.model
- *  - llm_url          ← (not in global config, left empty)
- *  - temperature      ← hardcoded 0.7  (global config has no temperature field)
- *  - max_tokens       ← hardcoded 4096 (global config has no max_tokens field)
- *  - timeout          ← hardcoded 300  (global config has no timeout field)
- *  - validation.*     ← global config.validation.validate_after_run / max_fix_rounds
- *  - git.enabled      ← hardcoded false (global config has no git field)
- */
 function buildDefaultsFromGlobal(global: {
   model?: string
-  validation?: { validate_after_run?: boolean; max_fix_rounds?: number }
+  llm_url?: string
+  file_limit?: number
+  validation?: {
+    validate_after_run?: boolean
+    max_fix_rounds?: number
+  }
 }): ProjectConfig {
   return {
     model:       global.model ?? '',
-    llm_url:     '',
+    llm_url:     global.llm_url ?? '',
     temperature: 0.7,
     max_tokens:  4096,
     timeout:     300,
+    file_limit:  global.file_limit ?? 30,
+    architect_prompt: '',
+    engineer_prompt:  '',
+    models: {},
     validation: {
       validate_after_run: global.validation?.validate_after_run ?? false,
       max_fix_rounds:     global.validation?.max_fix_rounds ?? 3,
+      model:              '',
+      step_filter:        null,
+      stdout_preview_limit: 200000,
+      target_coverage:    80,
     },
-    git: { enabled: false },
+    claude_md: { enabled: true, model: '', memory_model: '' },
+    git:       { enabled: false },
+    execution_context_max_turns:     10,
+    execution_context_content_limit: 500,
   }
 }
 
@@ -115,19 +75,13 @@ export default function ProjectConfigPage() {
   const navigate  = useNavigate()
   const isAdmin   = useAuthStore((s) => s.isAdmin())
 
-  const [config,        setConfig]        = useState<ProjectConfig>(emptyConfig())
-  const [original,      setOriginal]      = useState<ProjectConfig>(emptyConfig())
-  const [loading,       setLoading]       = useState(true)
-  const [saving,        setSaving]        = useState(false)
-  const [resetConfirm,  setResetConfirm]  = useState(false)
-  const [resetLoading,  setResetLoading]  = useState(false)
-  /**
-   * isDefault = true means "no project-specific config exists yet;
-   * we're pre-filling from the system global config so the user sees
-   * meaningful values instead of all-empty fields."
-   */
-  const [isDefault,     setIsDefault]     = useState(false)
-  const [projectName,   setProjectName]   = useState('')
+  const [config,       setConfig]       = useState<ProjectConfig>(emptyConfig())
+  const [loading,      setLoading]      = useState(true)
+  const [saving,       setSaving]       = useState(false)
+  const [resetConfirm, setResetConfirm] = useState(false)
+  const [resetLoading, setResetLoading] = useState(false)
+  const [isDefault,    setIsDefault]    = useState(false)
+  const [projectName,  setProjectName]  = useState('')
 
   const sid = solutionId!
   const pid = projectId!
@@ -136,31 +90,23 @@ export default function ProjectConfigPage() {
     const load = async () => {
       setLoading(true)
       try {
-        // ── Happy path: project already has its own config ────────────────
         const res = await projectsApi.getConfig(sid, pid)
         setProjectName(res.project_name)
         const merged = { ...emptyConfig(), ...res.config }
         setConfig(merged)
-        setOriginal(merged)
         setIsDefault(false)
       } catch (err: unknown) {
         const status = (err as { response?: { status?: number } })?.response?.status
         const code   = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
 
         if (code === 'config_not_found' || status === 404) {
-          // ── No per-project config yet: fill from system global config ────
-          // We always try to get the global config regardless of admin status
-          // so the form shows real system defaults instead of hard-coded zeros.
           try {
             const global = await configApi.get()
             const defaults = buildDefaultsFromGlobal(global)
             setConfig(defaults)
-            setOriginal(emptyConfig())  // original stays "empty" so isDirty works correctly
             setIsDefault(true)
           } catch {
-            // If global config fetch also fails, fall back to hard-coded empty defaults
             setConfig(emptyConfig())
-            setOriginal(emptyConfig())
             setIsDefault(true)
           }
         } else {
@@ -178,7 +124,6 @@ export default function ProjectConfigPage() {
     try {
       await projectsApi.patchConfig(sid, pid, config)
       toast.success('配置已保存')
-      setOriginal(config)
       setIsDefault(false)
     } catch {
       toast.error('保存失败')
@@ -194,7 +139,6 @@ export default function ProjectConfigPage() {
       const reset  = buildDefaultsFromGlobal(global)
       await projectsApi.patchConfig(sid, pid, reset)
       setConfig(reset)
-      setOriginal(reset)
       setIsDefault(false)
       toast.success('已重置为系统默认')
     } catch {
@@ -204,15 +148,6 @@ export default function ProjectConfigPage() {
       setResetConfirm(false)
     }
   }
-
-  const set = <K extends keyof ProjectConfig>(key: K, val: ProjectConfig[K]) =>
-    setConfig((c) => ({ ...c, [key]: val }))
-
-  const setValidation = (key: string, val: unknown) =>
-    setConfig((c) => ({
-      ...c,
-      validation: { ...c.validation, [key]: val },
-    }))
 
   if (loading) {
     return (
@@ -249,89 +184,13 @@ export default function ProjectConfigPage() {
         </div>
       )}
 
-      <div className="bg-surface-1 border border-border rounded-xl p-6 space-y-2">
-
-        {/* LLM */}
-        <Section title="LLM 设置" />
-        <Field label="模型名称" hint="留空则继承系统默认">
-          <TextInput
-            value={config.model ?? ''}
-            onChange={(e) => set('model', e.target.value)}
-            placeholder="GPT-4.1"
-          />
-        </Field>
-        <Field label="LLM API 地址" hint="OpenAI 兼容接口地址">
-          <TextInput
-            value={config.llm_url ?? ''}
-            onChange={(e) => set('llm_url', e.target.value)}
-            placeholder="https://api.openai.com"
-          />
-        </Field>
-        <Field label="温度（0-1）" hint="值越高，生成内容越有创意">
-          <div className="flex items-center gap-3">
-            <input
-              type="range"
-              min={0} max={1} step={0.05}
-              value={config.temperature ?? 0.7}
-              onChange={(e) => set('temperature', parseFloat(e.target.value))}
-              className="w-40 accent-brand-500"
-            />
-            <TextInput
-              type="number"
-              min={0} max={1} step={0.05}
-              value={config.temperature ?? 0.7}
-              onChange={(e) => set('temperature', parseFloat(e.target.value))}
-              className="!w-20"
-            />
-          </div>
-        </Field>
-        <Field label="Max Tokens">
-          <TextInput
-            type="number"
-            min={1024} max={128000}
-            value={config.max_tokens ?? 4096}
-            onChange={(e) => set('max_tokens', parseInt(e.target.value))}
-            className="!w-32"
-          />
-        </Field>
-        <Field label="超时（秒）">
-          <TextInput
-            type="number"
-            min={30} max={3600}
-            value={config.timeout ?? 300}
-            onChange={(e) => set('timeout', parseInt(e.target.value))}
-            className="!w-32"
-          />
-        </Field>
-
-        {/* Validation */}
-        <Section title="验证设置" />
-        <Field label="自动验证">
-          <Toggle
-            checked={config.validation?.validate_after_run ?? false}
-            onChange={(v) => setValidation('validate_after_run', v)}
-            label="完成后自动验证代码（validate_after_run）"
-          />
-        </Field>
-        <Field label="最大修复轮数">
-          <TextInput
-            type="number"
-            min={0} max={20}
-            value={config.validation?.max_fix_rounds ?? 3}
-            onChange={(e) => setValidation('max_fix_rounds', parseInt(e.target.value))}
-            className="!w-24"
-          />
-        </Field>
-
-        {/* Git */}
-        <Section title="Git 集成" />
-        <Field label="启用 Git" hint="需在系统配置中提前配置 GitLab 信息">
-          <Toggle
-            checked={config.git?.enabled ?? false}
-            onChange={(v) => setConfig((c) => ({ ...c, git: { ...c.git, enabled: v } }))}
-            label="启用 Git 集成（git.enabled）"
-          />
-        </Field>
+      <div className="bg-surface-1 border border-border rounded-xl p-6">
+        <ConfigForm
+          mode="project"
+          config={config}
+          onChange={setConfig}
+          isDefault={isDefault}
+        />
       </div>
 
       {/* Footer actions */}

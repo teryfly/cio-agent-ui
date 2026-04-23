@@ -3,8 +3,9 @@ import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { solutionsApi } from '../../api/solutions'
 import { projectsApi  } from '../../api/projects'
+import { runsApi      } from '../../api/runs'
 import { useAppStore } from '../../store/appStore'
-import type { Solution, Project, Visibility } from '../../api/types'
+import type { Solution, Project, Visibility, ProjectType } from '../../api/types'
 import Button from '../../components/ui/Button'
 import Modal from '../../components/ui/Modal'
 import ConfirmDialog from '../../components/ui/ConfirmDialog'
@@ -13,15 +14,9 @@ import { StatusBadge, TypeBadge, VisibilityBadge } from '../../components/ui/Sta
 
 /* ── New/Edit Solution Modal ──────────────────────────────────────────────── */
 function SolutionFormModal({
-  open,
-  onClose,
-  existing,
-  onSaved,
+  open, onClose, existing, onSaved,
 }: {
-  open: boolean
-  onClose: () => void
-  existing: Solution | null
-  onSaved: () => void
+  open: boolean; onClose: () => void; existing: Solution | null; onSaved: () => void
 }) {
   const [name, setName]       = useState('')
   const [desc, setDesc]       = useState('')
@@ -64,76 +59,172 @@ function SolutionFormModal({
   }
 
   return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title={existing ? '编辑 Solution' : '新建 Solution'}
-      width="sm"
-    >
+    <Modal open={open} onClose={onClose} title={existing ? '编辑 Solution' : '新建 Solution'} width="sm">
       <form onSubmit={handleSubmit} className="px-5 py-4 space-y-4">
         <div>
           <label className="block text-xs font-medium text-gray-400 mb-1.5">名称 *</label>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="my-solution"
-            className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500/50"
-          />
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="my-solution"
+            className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500/50" />
         </div>
         <div>
           <label className="block text-xs font-medium text-gray-400 mb-1.5">描述</label>
-          <textarea
-            value={desc}
-            onChange={(e) => setDesc(e.target.value)}
-            rows={3}
-            placeholder="可选说明"
-            className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500/50 resize-none"
-          />
+          <textarea value={desc} onChange={(e) => setDesc(e.target.value)} rows={3} placeholder="可选说明"
+            className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500/50 resize-none" />
         </div>
         <div>
           <label className="block text-xs font-medium text-gray-400 mb-1.5">可见性</label>
-          <select
-            value={vis}
-            onChange={(e) => setVis(e.target.value as Visibility)}
-            className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-brand-500"
-          >
+          <select value={vis} onChange={(e) => setVis(e.target.value as Visibility)}
+            className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-brand-500">
             <option value="private">Private（仅自己和授权成员）</option>
             <option value="shared">Shared（团队可见）</option>
           </select>
         </div>
         <div className="flex justify-end gap-2 pt-1">
           <Button variant="ghost" type="button" onClick={onClose}>取消</Button>
-          <Button variant="primary" type="submit" loading={loading}>
-            {existing ? '保存' : '创建'}
-          </Button>
+          <Button variant="primary" type="submit" loading={loading}>{existing ? '保存' : '创建'}</Button>
         </div>
       </form>
     </Modal>
   )
 }
 
-/* ── Project mini-row inside card ─────────────────────────────────────────── */
+/* ── New Project Modal ────────────────────────────────────────────────────── */
+function NewProjectModal({
+  open, onClose, solutionId, onSaved,
+}: { open: boolean; onClose: () => void; solutionId: string; onSaved: () => void }) {
+  const [form, setForm] = useState({ name: '', type: 'backend' as ProjectType, description: '' })
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (open) setForm({ name: '', type: 'backend', description: '' })
+  }, [open])
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!form.name.trim()) return
+    setLoading(true)
+    try {
+      await projectsApi.create(solutionId, {
+        name: form.name,
+        project_type: form.type,
+        description: form.description,
+      })
+      toast.success('Project 已创建')
+      onSaved()
+      onClose()
+    } catch (err: unknown) {
+      const code = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+      if (code === 'project_already_exists') toast.error('项目名称已存在')
+      else toast.error('创建失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} title="新建 Project" width="sm">
+      <form onSubmit={handleSubmit} className="px-5 py-4 space-y-4">
+        <div>
+          <label className="block text-xs font-medium text-gray-400 mb-1.5">项目名称 *</label>
+          <input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+            placeholder="backend-api" autoFocus
+            className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500/50" />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-400 mb-1.5">类型</label>
+          <select value={form.type} onChange={(e) => setForm((f) => ({ ...f, type: e.target.value as ProjectType }))}
+            className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-brand-500">
+            <option value="backend">Backend</option>
+            <option value="frontend">Frontend</option>
+            <option value="library">Library</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-400 mb-1.5">描述</label>
+          <textarea value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+            rows={2} placeholder="可选"
+            className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-brand-500 resize-none" />
+        </div>
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" type="button" onClick={onClose}>取消</Button>
+          <Button variant="primary" type="submit" loading={loading}>创建</Button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
+/* ── Project mini-row with run/validate actions ───────────────────────────── */
 function ProjectMiniRow({
   project,
   solutionId,
+  onValidate,
 }: {
   project: Project
   solutionId: string
+  onValidate: (pid: string) => void
 }) {
   const navigate = useNavigate()
+
+  // Run status icon for quick overview
+  const statusIcon: Record<string, string> = {
+    idle:    '○',
+    pending: '○',
+    running: '●',
+    success: '✓',
+    failed:  '✗',
+  }
+  const statusColor: Record<string, string> = {
+    idle:    'text-gray-500',
+    pending: 'text-gray-500',
+    running: 'text-blue-400 animate-pulse',
+    success: 'text-green-400',
+    failed:  'text-red-400',
+  }
+
   return (
-    <div
-      className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-surface-3 cursor-pointer transition-colors group"
-      onClick={(e) => {
-        e.stopPropagation()
-        navigate(`/solutions/${solutionId}/projects/${project.id}`)
-      }}
-    >
-      <StatusBadge status={project.status as 'idle' | 'running' | 'success' | 'failed'} />
-      <TypeBadge type={project.type} />
-      <span className="text-xs text-gray-300 flex-1 truncate group-hover:text-gray-100 transition-colors">
-        {project.name}
+    <div className="flex items-center gap-1.5 py-1.5 px-2 rounded hover:bg-surface-3 transition-colors group/row">
+      {/* Status icon */}
+      <span className={`text-[10px] shrink-0 w-4 text-center ${statusColor[project.status]}`}>
+        {statusIcon[project.status] ?? '○'}
       </span>
+      <TypeBadge type={project.type} />
+
+      {/* Name */}
+      <button
+        className="text-xs text-gray-300 flex-1 truncate text-left group-hover/row:text-gray-100 transition-colors"
+        onClick={(e) => {
+          e.stopPropagation()
+          navigate(`/solutions/${solutionId}/projects/${project.id}`)
+        }}
+      >
+        {project.name}
+      </button>
+
+      {/* Quick action buttons — visible on row hover */}
+      <div className="flex items-center gap-1 opacity-0 group-hover/row:opacity-100 transition-opacity shrink-0">
+        <button
+          title="Auto Run"
+          onClick={(e) => {
+            e.stopPropagation()
+            navigate(`/solutions/${solutionId}/projects/${project.id}/run?variant=auto`)
+          }}
+          className="text-[10px] px-1.5 py-0.5 rounded bg-brand-600/20 text-brand-400 hover:bg-brand-600/40 transition-colors border border-brand-600/30"
+        >
+          ▶ Run
+        </button>
+        <button
+          title="验证"
+          onClick={(e) => {
+            e.stopPropagation()
+            onValidate(project.id)
+          }}
+          className="text-[10px] px-1.5 py-0.5 rounded bg-surface-4 text-gray-400 hover:text-green-400 hover:bg-green-400/10 transition-colors border border-border"
+        >
+          ✓
+        </button>
+      </div>
     </div>
   )
 }
@@ -145,12 +236,16 @@ function SolutionCard({
   projectsLoading,
   onEdit,
   onDelete,
+  onAddProject,
+  onValidateProject,
 }: {
   sol: Solution
   projects: Project[]
   projectsLoading: boolean
   onEdit: (s: Solution) => void
   onDelete: (s: Solution) => void
+  onAddProject: (sol: Solution) => void
+  onValidateProject: (solutionId: string, projectId: string) => void
 }) {
   const navigate = useNavigate()
 
@@ -167,10 +262,21 @@ function SolutionCard({
           )}
         </div>
         {/* Actions – visible on hover */}
-        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+        <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+          {/* ＋ Add project */}
+          <button
+            onClick={(e) => { e.stopPropagation(); onAddProject(sol) }}
+            className="p-1.5 text-gray-500 hover:text-brand-400 transition-colors rounded hover:bg-brand-600/10"
+            title="新建 Project"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          </button>
           <button
             onClick={(e) => { e.stopPropagation(); onEdit(sol) }}
-            className="p-1 text-gray-500 hover:text-gray-200 transition-colors"
+            className="p-1.5 text-gray-500 hover:text-gray-200 transition-colors rounded hover:bg-surface-3"
             title="编辑"
           >
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -180,7 +286,7 @@ function SolutionCard({
           </button>
           <button
             onClick={(e) => { e.stopPropagation(); onDelete(sol) }}
-            className="p-1 text-gray-500 hover:text-red-400 transition-colors"
+            className="p-1.5 text-gray-500 hover:text-red-400 transition-colors rounded hover:bg-red-400/10"
             title="删除"
           >
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -192,7 +298,7 @@ function SolutionCard({
         </div>
       </div>
 
-      {/* ── Project list ───────────────────────────────────────────────── */}
+      {/* Project list with run/validate actions */}
       <div className="flex-1 min-h-0">
         {projectsLoading ? (
           <div className="space-y-1">
@@ -201,11 +307,21 @@ function SolutionCard({
             ))}
           </div>
         ) : projects.length === 0 ? (
-          <p className="text-xs text-gray-600 py-1">暂无项目</p>
+          <button
+            onClick={() => onAddProject(sol)}
+            className="w-full text-xs text-gray-600 hover:text-brand-400 py-2 text-left transition-colors"
+          >
+            ＋ 添加第一个项目
+          </button>
         ) : (
-          <div className="space-y-0.5 max-h-32 overflow-y-auto">
+          <div className="space-y-0 max-h-40 overflow-y-auto">
             {projects.map((p) => (
-              <ProjectMiniRow key={p.id} project={p} solutionId={sol.id} />
+              <ProjectMiniRow
+                key={p.id}
+                project={p}
+                solutionId={sol.id}
+                onValidate={(pid) => onValidateProject(sol.id, pid)}
+              />
             ))}
           </div>
         )}
@@ -223,22 +339,29 @@ function SolutionCard({
   )
 }
 
+/* ── Validate confirm dialog state ───────────────────────────────────────── */
+
+interface ValidateTarget { solutionId: string; projectId: string }
+
 /* ── Main Page ───────────────────────────────────────────────────────────── */
 export default function SolutionsPage() {
   const { solutions, setSolutions } = useAppStore()
+  const navigate = useNavigate()
   const [loading, setLoading] = useState(true)
   const [modalOpen, setModalOpen] = useState(false)
   const [editing,   setEditing]   = useState<Solution | null>(null)
   const [delTarget, setDelTarget] = useState<Solution | null>(null)
   const [delLoading, setDelLoading] = useState(false)
 
-  /**
-   * projectsMap: solutionId → Project[]
-   * Populated by fetching GET /solutions/{sid}/projects/ for every solution
-   * in parallel after the solution list loads.
-   */
+  // New project modal
+  const [newProjSol, setNewProjSol] = useState<Solution | null>(null)
+
   const [projectsMap,     setProjectsMap]     = useState<Record<string, Project[]>>({})
   const [projectsLoading, setProjectsLoading] = useState(false)
+
+  // Validate quick action
+  const [validateTarget,  setValidateTarget]  = useState<ValidateTarget | null>(null)
+  const [validateLoading, setValidateLoading] = useState(false)
 
   const load = () => {
     setLoading(true)
@@ -248,7 +371,6 @@ export default function SolutionsPage() {
         return d.solutions
       })
       .then((sols) => {
-        // After the solution list is ready, concurrently fetch each solution's projects
         if (sols.length === 0) return
         setProjectsLoading(true)
         Promise.allSettled(
@@ -286,6 +408,21 @@ export default function SolutionsPage() {
     }
   }
 
+  const handleValidate = async () => {
+    if (!validateTarget) return
+    setValidateLoading(true)
+    try {
+      const res = await runsApi.validateRun(validateTarget.solutionId, validateTarget.projectId, { fix_rounds: 3 })
+      toast.success('验证已启动')
+      setValidateTarget(null)
+      navigate(`/runs/${res.run_id}`)
+    } catch {
+      toast.error('启动验证失败')
+    } finally {
+      setValidateLoading(false)
+    }
+  }
+
   return (
     <div>
       {/* Header */}
@@ -294,12 +431,8 @@ export default function SolutionsPage() {
           <h1 className="text-lg font-semibold text-gray-100">My Solutions</h1>
           <p className="text-xs text-gray-500 mt-0.5">{solutions.length} 个 Solution</p>
         </div>
-        <Button
-          variant="primary"
-          size="sm"
-          icon="+"
-          onClick={() => { setEditing(null); setModalOpen(true) }}
-        >
+        <Button variant="primary" size="sm" icon="+"
+          onClick={() => { setEditing(null); setModalOpen(true) }}>
           New Solution
         </Button>
       </div>
@@ -332,6 +465,8 @@ export default function SolutionsPage() {
               projectsLoading={projectsLoading && !(sol.id in projectsMap)}
               onEdit={(s) => { setEditing(s); setModalOpen(true) }}
               onDelete={setDelTarget}
+              onAddProject={(s) => setNewProjSol(s)}
+              onValidateProject={(sid, pid) => setValidateTarget({ solutionId: sid, projectId: pid })}
             />
           ))}
           {/* New card */}
@@ -352,6 +487,17 @@ export default function SolutionsPage() {
         existing={editing}
         onSaved={load}
       />
+
+      <NewProjectModal
+        open={!!newProjSol}
+        onClose={() => setNewProjSol(null)}
+        solutionId={newProjSol?.id ?? ''}
+        onSaved={() => {
+          load()
+          setNewProjSol(null)
+        }}
+      />
+
       <ConfirmDialog
         open={!!delTarget}
         onClose={() => setDelTarget(null)}
@@ -361,6 +507,16 @@ export default function SolutionsPage() {
         confirmLabel="删除"
         danger
         loading={delLoading}
+      />
+
+      <ConfirmDialog
+        open={!!validateTarget}
+        onClose={() => setValidateTarget(null)}
+        onConfirm={handleValidate}
+        title="启动代码验证"
+        message="将对当前工作区代码执行全流程验证（安装依赖 → 测试 → Lint），是否继续？"
+        confirmLabel="开始验证"
+        loading={validateLoading}
       />
     </div>
   )

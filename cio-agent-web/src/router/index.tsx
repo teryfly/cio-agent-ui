@@ -15,6 +15,7 @@ import ProjectConfigPage  from '../pages/projects/ProjectConfigPage'
 import KnowledgePage      from '../pages/knowledge/KnowledgePage'
 import AllRunsPage        from '../pages/runs/AllRunsPage'
 import RunDetailPage      from '../pages/runs/RunDetailPage'
+import NewRunPage         from '../pages/runs/NewRunPage'
 import UsersPage          from '../pages/admin/UsersPage'
 import ConfigPage         from '../pages/admin/ConfigPage'
 import LogsPage           from '../pages/admin/LogsPage'
@@ -29,7 +30,6 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   }
 
   if (!isTokenValid()) {
-    // Token expired — clean up and redirect
     useAuthStore.getState().logout()
     return <Navigate to="/login" replace />
   }
@@ -47,6 +47,12 @@ export const router = createBrowserRouter([
   { path: '/login',    element: <LoginPage /> },
   { path: '/register', element: <RegisterPage /> },
   { path: '/init',     element: <InitPage /> },
+
+  // Full-screen run page — outside Layout (no sidebar/topbar)
+  {
+    path: '/solutions/:solutionId/projects/:projectId/run',
+    element: <RequireAuth><NewRunPage /></RequireAuth>,
+  },
 
   {
     path: '/',
@@ -71,6 +77,5 @@ export const router = createBrowserRouter([
     ],
   },
 
-  // Catch-all: redirect unknown paths to solutions (or login if not authed)
   { path: '*', element: <Navigate to="/solutions" replace /> },
 ])

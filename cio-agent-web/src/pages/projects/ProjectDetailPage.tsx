@@ -12,7 +12,6 @@ import PageHeader    from '../../components/ui/PageHeader'
 import EmptyState    from '../../components/ui/EmptyState'
 import ConfirmDialog from '../../components/ui/ConfirmDialog'
 import { StatusBadge, TypeBadge } from '../../components/ui/StatusBadge'
-import NewRunModal from '../solutions/components/NewRunModal'
 import RunMonitor  from './components/RunMonitor'
 
 dayjs.extend(relativeTime)
@@ -28,6 +27,7 @@ function RunRow({ run, onClick }: { run: RunSummary; onClick: () => void }) {
   const typeLabel: Record<string, string> = {
     new:          '新建',
     secondary:    '二次开发',
+    auto:         '自动',
     validate:     '验证',
     resume:       '恢复',
     orchestration:'编排',
@@ -128,10 +128,6 @@ export default function ProjectDetailPage() {
   const [validateLoading, setValidateLoading] = useState(false)
   const [statusFilter,    setStatusFilter]    = useState<string>('all')
 
-  // Run modals
-  const [newRunOpen,  setNewRunOpen]  = useState(false)
-  const [secRunOpen,  setSecRunOpen]  = useState(false)
-
   // Inline monitor for a just-launched run
   const [monitorRunId, setMonitorRunId] = useState<string | null>(null)
 
@@ -156,6 +152,11 @@ export default function ProjectDetailPage() {
 
   useEffect(() => { loadProject() }, [loadProject])
   useEffect(() => { loadRuns() },    [loadRuns])
+
+  // Navigate to full-screen run page
+  const goToRunPage = (variant: 'auto' | 'new' | 'secondary') => {
+    navigate(`/solutions/${sid}/projects/${pid}/run?variant=${variant}`)
+  }
 
   const handleValidate = async () => {
     setValidateLoading(true)
@@ -237,11 +238,15 @@ export default function ProjectDetailPage() {
               </p>
             )}
           </div>
+          {/* Run buttons — navigate to full-screen page */}
           <div className="flex items-center gap-2 flex-wrap">
-            <Button variant="primary"   size="sm" icon="▶" onClick={() => setNewRunOpen(true)}>
+            <Button variant="primary"   size="sm" icon="⚡" onClick={() => goToRunPage('auto')}>
+              Auto Run
+            </Button>
+            <Button variant="secondary" size="sm" icon="▶" onClick={() => goToRunPage('new')}>
               New Run
             </Button>
-            <Button variant="secondary" size="sm" icon="↺" onClick={() => setSecRunOpen(true)}>
+            <Button variant="secondary" size="sm" icon="↺" onClick={() => goToRunPage('secondary')}>
               Secondary
             </Button>
             <Button variant="secondary" size="sm" icon="✓" onClick={() => setValidateConfirm(true)}>
@@ -251,7 +256,7 @@ export default function ProjectDetailPage() {
         </div>
       </div>
 
-      {/* Inline run monitor (appears after launching a run from this page) */}
+      {/* Inline run monitor (appears after launching validate from this page) */}
       {monitorRunId && (
         <div className="mb-5 bg-surface-1 border border-border rounded-xl p-4">
           <div className="flex items-center justify-between mb-3">
@@ -317,7 +322,7 @@ export default function ProjectDetailPage() {
           <EmptyState
             icon="⚡"
             title="暂无运行记录"
-            description="点击「New Run」开始第一次 AI 编码任务"
+            description="点击「Auto Run」开始 AI 编码任务"
           />
         ) : (
           <div className="space-y-2">
@@ -332,33 +337,6 @@ export default function ProjectDetailPage() {
         )}
       </div>
 
-      {/* Modals */}
-      <NewRunModal
-        open={newRunOpen}
-        onClose={() => setNewRunOpen(false)}
-        solutionId={sid}
-        projectId={pid}
-        projectName={project.name}
-        variant="new"
-        onLaunched={(runId) => {
-          setNewRunOpen(false)
-          setMonitorRunId(runId)
-          loadRuns()
-        }}
-      />
-      <NewRunModal
-        open={secRunOpen}
-        onClose={() => setSecRunOpen(false)}
-        solutionId={sid}
-        projectId={pid}
-        projectName={project.name}
-        variant="secondary"
-        onLaunched={(runId) => {
-          setSecRunOpen(false)
-          setMonitorRunId(runId)
-          loadRuns()
-        }}
-      />
       <ConfirmDialog
         open={validateConfirm}
         onClose={() => setValidateConfirm(false)}

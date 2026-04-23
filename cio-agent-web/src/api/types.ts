@@ -81,19 +81,104 @@ export interface Project {
   config_json?: ProjectConfig
 }
 
+// ─── Per-role model overrides ──────────────────────────────────────────────────
+
+export interface ModelOverrides {
+  cio_naming_model?: string
+  cio_decision_model?: string
+  cio_executor_model?: string
+  architect_model?: string
+  engineer_model?: string
+  documenter_model?: string
+}
+
+// ─── Validation config ────────────────────────────────────────────────────────
+
+export interface ValidationConfig {
+  validate_after_run?: boolean
+  max_fix_rounds?: number
+  model?: string
+  step_filter?: string[] | null
+  stdout_preview_limit?: number
+  target_coverage?: number
+}
+
+// ─── Claude MD config ─────────────────────────────────────────────────────────
+
+export interface ClaudeMdConfig {
+  enabled?: boolean
+  model?: string
+  memory_model?: string
+}
+
+// ─── Execution context config ─────────────────────────────────────────────────
+
+// (top-level fields in GlobalConfig)
+
+// ─── Git config ───────────────────────────────────────────────────────────────
+
+export interface GitUserConfig {
+  name?: string
+  email?: string
+}
+
+export interface GitlabConfig {
+  token?: string
+  base_url?: string
+  namespace?: string
+  branch?: string
+}
+
+export interface GitConfig {
+  enabled?: boolean
+  user?: GitUserConfig
+  gitlab?: GitlabConfig
+  push_strategy?: 'never' | 'on_complete' | 'on_phase' | 'manual'
+  branch_strategy?: 'feature_branch' | 'direct_main'
+  feature_branch_prefix?: string
+  init_on_new_project?: boolean
+  commit_on_phase?: boolean
+  tag_on_validate?: boolean
+  gitignore_cio_logs?: boolean
+}
+
+// ─── Project Config ───────────────────────────────────────────────────────────
+
 export interface ProjectConfig {
   model?: string
   llm_url?: string
   temperature?: number
   max_tokens?: number
   timeout?: number
-  validation?: {
-    validate_after_run?: boolean
-    max_fix_rounds?: number
-  }
-  git?: {
-    enabled?: boolean
-  }
+  file_limit?: number
+  architect_prompt?: string
+  engineer_prompt?: string
+  models?: ModelOverrides
+  validation?: ValidationConfig
+  claude_md?: ClaudeMdConfig
+  git?: GitConfig
+  execution_context_max_turns?: number
+  execution_context_content_limit?: number
+}
+
+// ─── Global Config ────────────────────────────────────────────────────────────
+
+export interface GlobalConfig {
+  model: string
+  llm_url?: string
+  api_key: string
+  file_limit: number
+  work_dir: string
+  claude_alias: string
+  architect_prompt?: string
+  engineer_prompt?: string
+  cio_prompts?: Record<string, string>
+  models?: ModelOverrides
+  validation: ValidationConfig
+  claude_md?: ClaudeMdConfig
+  execution_context_max_turns?: number
+  execution_context_content_limit?: number
+  git?: GitConfig
 }
 
 // ─── Run ──────────────────────────────────────────────────────────────────────
@@ -220,20 +305,6 @@ export interface ValidationReport {
   step_results: ValidationStepResult[]
   overall_outcome: ValidationOutcome
   summary: string
-}
-
-// ─── Config ───────────────────────────────────────────────────────────────────
-
-export interface GlobalConfig {
-  model: string
-  api_key: string
-  file_limit: number
-  work_dir: string
-  claude_alias: string
-  validation: {
-    validate_after_run: boolean
-    max_fix_rounds: number
-  }
 }
 
 // ─── API Errors ───────────────────────────────────────────────────────────────

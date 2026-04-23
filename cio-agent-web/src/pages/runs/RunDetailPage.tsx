@@ -87,15 +87,21 @@ export default function RunDetailPage() {
       .finally(() => setLoading(false))
   }, [runId])
 
-  // Periodically refresh until terminal state
+  /**
+   * SSE 优化：仅当 run 状态为 pending/running 时才定时轮询 REST 接口刷新元数据。
+   * SSE 事件流本身（RunMonitor 组件）自行管理连接。
+   * 已终止的 run（success/failed）不再轮询，只能手动刷新。
+   */
   useEffect(() => {
     if (!runId || !run) return
+    // 已完成状态 — 不轮询
     if (run.status === 'success' || run.status === 'failed') return
+
     const t = setInterval(() => {
       runsApi.get(runId).then(setRun).catch(() => {})
     }, 5000)
     return () => clearInterval(t)
-  }, [runId, run])
+  }, [runId, run?.status]) // 仅在 status 变化时重新注册
 
   if (loading) {
     return (
@@ -122,9 +128,12 @@ export default function RunDetailPage() {
     ? dayjs(run.finished_at).diff(dayjs(run.started_at), 'second')
     : null
 
+  const isActive = run.status === 'pending' || run.status === 'running'
+
   const typeLabel: Record<string, string> = {
     new:           '新建',
     secondary:     '二次开发',
+    auto:          '自动',
     validate:      '验证',
     resume:        '恢复',
     orchestration: '编排',
@@ -140,7 +149,20 @@ export default function RunDetailPage() {
           { label: run.run_id.slice(0, 8) },
         ]}
         actions={
-          <Button variant="ghost" size="xs" onClick={() => navigate(-1)}>← 返回</Button>
+          <div className="flex items-center gap-2">
+            {/* Manual refresh when not running */}
+            {!isActive && (
+              <Button variant="ghost" size="xs"
+                onClick={() => runsApi.get(run.run_id).then(setRun).catch(() => {})}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="mr-1">
+                  <polyline points="23,4 23,10 17,10" />
+                  <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                </svg>
+                刷新
+              </Button>
+            )}
+            <Button variant="ghost" size="xs" onClick={() => navigate(-1)}>← 返回</Button>
+          </div>
         }
       />
 
@@ -149,7 +171,14 @@ export default function RunDetailPage() {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
           <div>
             <p className="text-[11px] text-gray-500 mb-1">状态</p>
-            <StatusBadge status={run.status} />
+            <div className="flex items-center gap-2">
+              <StatusBadge status={run.status} />
+              {isActive && (
+                <span className="text-[10px] text-blue-400 bg-blue-400/10 border border-blue-400/20 px-1.5 py-0.5 rounded animate-pulse">
+                  实时
+                </span>
+              )}
+            </div>
           </div>
           <div>
             <p className="text-[11px] text-gray-500 mb-1">类型</p>
@@ -199,9 +228,17 @@ export default function RunDetailPage() {
         )}
       </div>
 
-      {/* SSE Event Stream */}
-      <div className="bg-surface-1 border border-border rounded-xl p-4 mb-4" style={{ height: '520px' }}>
-        <h2 className="text-sm font-medium text-gray-300 mb-3">事件流</h2>
+      {/* SSE Event Stream — full-height */}
+      <div className="bg-surface-1 border border-border rounded-xl p-4 mb-4"
+        style={{ height: 'calc(100vh - 380px)', minHeight: '400px' }}>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-medium text-gray-300">事件流</h2>
+          {!isActive && (
+            <span className="text-[11px] text-gray-600 bg-surface-3 px-2 py-0.5 rounded">
+              已完成 — SSE 连接已关闭
+            </span>
+          )}
+        </div>
         <div style={{ height: 'calc(100% - 32px)' }}>
           <RunMonitor runId={run.run_id} inline />
         </div>
