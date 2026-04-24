@@ -1,5 +1,5 @@
 import { NavLink, useNavigate, useParams } from 'react-router-dom'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useAppStore   } from '../../store/appStore'
 import { useAuthStore  } from '../../store/authStore'
 import { useRunStore   } from '../../store/runStore'
@@ -65,39 +65,41 @@ function SolutionTreeItem({ sol }: { sol: Solution }) {
 /* ── Main Sidebar ─────────────────────────────────────────────────────────── */
 
 export default function Sidebar() {
-  const collapsed     = useAppStore((s) => s.sidebarCollapsed)
-  const solutions     = useAppStore((s) => s.solutions)
-  const setSolutions  = useAppStore((s) => s.setSolutions)
-  const isAdmin       = useAuthStore((s) => s.isAdmin())
+  const collapsed      = useAppStore((s) => s.sidebarCollapsed)
+  const solutions      = useAppStore((s) => s.solutions)
+  const setSolutions   = useAppStore((s) => s.setSolutions)
+  const isAdmin        = useAuthStore((s) => s.isAdmin())
   const activeSessions = useRunStore((s) => s.activeSessions)
-  const navigate      = useNavigate()
+  const navigate       = useNavigate()
 
-  const [activeRunCount, setActiveRunCount] = useState(0)
+  // Active run count fetched once on mount from server
+  const [serverActiveCount, setServerActiveCount] = useState(0)
 
-  // Load solutions
-  useEffect(() => {
-    solutionsApi.list()
-      .then((d) => setSolutions(d.solutions))
+  const fetchActiveCount = useCallback(() => {
+    runsApi.list({ status: 'running' })
+      .then((d) => setServerActiveCount(d.active ?? 0))
       .catch(() => {})
-  }, [setSolutions])
-
-  // Poll active run count from server
-  useEffect(() => {
-    const fetchCount = () => {
-      runsApi.list({ status: 'running' })
-        .then((d) => setActiveRunCount(d.active ?? 0))
-        .catch(() => {})
-    }
-    fetchCount()
-    const t = setInterval(fetchCount, 15_000)
-    return () => clearInterval(t)
   }, [])
 
-  // Also count from local store (more real-time)
+  // Load solutions if store is empty (e.g. hard reload)
+  useEffect(() => {
+    if (solutions.length === 0) {
+      solutionsApi.list()
+        .then((d) => setSolutions(d.solutions))
+        .catch(() => {})
+    }
+  }, [solutions.length, setSolutions])
+
+  // Fetch active count once on mount only — no auto-refresh
+  useEffect(() => {
+    fetchActiveCount()
+  }, [fetchActiveCount])
+
+  // Also count from local store (reflects launches during this session)
   const localActive = Object.values(activeSessions).filter(
     (s) => s.status === 'pending' || s.status === 'running'
   ).length
-  const totalActive = Math.max(activeRunCount, localActive)
+  const totalActive = Math.max(serverActiveCount, localActive)
 
   if (collapsed) return null
 
@@ -112,12 +114,10 @@ export default function Sidebar() {
           </span>
         </div>
 
-        {/* Solution tree */}
         {solutions.map((sol: Solution) => (
           <SolutionTreeItem key={sol.id} sol={sol} />
         ))}
 
-        {/* New solution */}
         <button
           onClick={() => navigate('/solutions')}
           className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-gray-600 hover:text-brand-400 hover:bg-surface-3 rounded-md transition-colors"
@@ -128,12 +128,10 @@ export default function Sidebar() {
 
         <div className="my-2 border-t border-border" />
 
-        {/* Main nav */}
         <NavItem to="/solutions" icon="⊞" label="所有 Solutions" end />
         <NavItem to="/knowledge" icon="📚" label="知识库" />
         <NavItem to="/runs"      icon="⚡" label="运行记录" badge={totalActive} />
 
-        {/* Admin section */}
         {isAdmin && (
           <>
             <div className="my-2 border-t border-border" />
@@ -150,7 +148,6 @@ export default function Sidebar() {
         )}
       </div>
 
-      {/* Bottom: version hint */}
       <div className="px-4 py-3 border-t border-border">
         <p className="text-[10px] text-gray-600">cio-agent-ui v0.1.0</p>
       </div>

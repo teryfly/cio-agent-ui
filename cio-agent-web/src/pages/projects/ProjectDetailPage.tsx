@@ -6,16 +6,28 @@ import 'dayjs/locale/zh-cn'
 import toast from 'react-hot-toast'
 import { projectsApi } from '../../api/projects'
 import { runsApi     } from '../../api/runs'
+import { useDataCache } from '../../hooks/useDataCache'
 import type { Project, RunSummary } from '../../api/types'
 import Button        from '../../components/ui/Button'
 import PageHeader    from '../../components/ui/PageHeader'
 import EmptyState    from '../../components/ui/EmptyState'
 import ConfirmDialog from '../../components/ui/ConfirmDialog'
 import { StatusBadge, TypeBadge } from '../../components/ui/StatusBadge'
-import RunMonitor  from './components/RunMonitor'
 
 dayjs.extend(relativeTime)
 dayjs.locale('zh-cn')
+
+/* ── Refresh icon ─────────────────────────────────────────────────────────── */
+
+function RefreshIcon({ spinning }: { spinning?: boolean }) {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+      className={spinning ? 'animate-spin' : ''}>
+      <polyline points="23,4 23,10 17,10" />
+      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+    </svg>
+  )
+}
 
 /* ── Run row ─────────────────────────────────────────────────────────────── */
 
@@ -25,13 +37,8 @@ function RunRow({ run, onClick }: { run: RunSummary; onClick: () => void }) {
     : null
 
   const typeLabel: Record<string, string> = {
-    new:          '新建',
-    secondary:    '二次开发',
-    auto:         '自动',
-    validate:     '验证',
-    resume:       '恢复',
-    orchestration:'编排',
-    cicd:         'CI/CD',
+    new: '新建', secondary: '二次开发', auto: '自动',
+    validate: '验证', resume: '恢复', orchestration: '编排', cicd: 'CI/CD',
   }
 
   return (
@@ -56,10 +63,8 @@ function RunRow({ run, onClick }: { run: RunSummary; onClick: () => void }) {
       {run.error && (
         <span className="text-[11px] text-red-400 max-w-[200px] truncate">{run.error}</span>
       )}
-      <svg
-        width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-        className="text-gray-600 opacity-0 group-hover:opacity-100 shrink-0"
-      >
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+        className="text-gray-600 opacity-0 group-hover:opacity-100 shrink-0">
         <polyline points="9,18 15,12 9,6" />
       </svg>
     </div>
@@ -69,25 +74,19 @@ function RunRow({ run, onClick }: { run: RunSummary; onClick: () => void }) {
 /* ── Project Summary Panel ───────────────────────────────────────────────── */
 
 function ProjectSummaryPanel({ solutionId, projectId }: { solutionId: string; projectId: string }) {
-  const [content, setContent] = useState<string>('')
-  const [exists,  setExists]  = useState(false)
-  const [loading, setLoading] = useState(true)
+  const [content,  setContent]  = useState<string>('')
+  const [exists,   setExists]   = useState(false)
+  const [loading,  setLoading]  = useState(true)
   const [expanded, setExpanded] = useState(false)
 
   useEffect(() => {
     projectsApi.getSummary(solutionId, projectId)
-      .then((d) => {
-        setContent(d.content)
-        setExists(d.exists)
-      })
+      .then((d) => { setContent(d.content); setExists(d.exists) })
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [solutionId, projectId])
 
-  if (loading) {
-    return <div className="h-12 bg-surface-2 rounded-lg animate-pulse" />
-  }
-
+  if (loading) return <div className="h-12 bg-surface-2 rounded-lg animate-pulse" />
   if (!exists || !content) return null
 
   return (
@@ -119,41 +118,85 @@ function ProjectSummaryPanel({ solutionId, projectId }: { solutionId: string; pr
 export default function ProjectDetailPage() {
   const { solutionId, projectId } = useParams<{ solutionId: string; projectId: string }>()
   const navigate = useNavigate()
+  const {
+    getProjectDetailCache, setProjectDetailCache, clearProjectDetailCache,
+    getProjectRunsCache, setProjectRunsCache, clearProjectRunsCache,
+  } = useDataCache()
 
   const [project,         setProject]         = useState<Project | null>(null)
   const [runs,            setRuns]            = useState<RunSummary[]>([])
   const [loading,         setLoading]         = useState(true)
   const [runsLoading,     setRunsLoading]     = useState(true)
+  const [runsRefreshing,  setRunsRefreshing]  = useState(false)
   const [validateConfirm, setValidateConfirm] = useState(false)
   const [validateLoading, setValidateLoading] = useState(false)
   const [statusFilter,    setStatusFilter]    = useState<string>('all')
 
-  // Inline monitor for a just-launched run
-  const [monitorRunId, setMonitorRunId] = useState<string | null>(null)
-
   const sid = solutionId!
   const pid = projectId!
 
-  const loadProject = useCallback(() => {
+  /** 从 API 拉取 project 元数据并写缓存 */
+  const fetchProjectFromApi = useCallback(async () => {
+    const p = await projectsApi.get(sid, pid)
+    setProject(p)
+    setProjectDetailCache(pid, { project: p })
+    return p
+  }, [sid, pid, setProjectDetailCache])
+
+  /** 首次加载 project 信息：读缓存 → 无缓存时拉 API */
+  useEffect(() => {
     setLoading(true)
-    projectsApi.get(sid, pid)
-      .then(setProject)
+    const cached = getProjectDetailCache(pid)
+    if (cached) {
+      setProject(cached.project)
+      setLoading(false)
+      return
+    }
+    fetchProjectFromApi()
       .catch(() => toast.error('加载项目失败'))
       .finally(() => setLoading(false))
-  }, [sid, pid])
+  }, [pid]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const loadRuns = useCallback(() => {
+  /** 从 API 拉取 runs 列表并写缓存 */
+  const fetchRunsFromApi = useCallback(async (status: string) => {
+    const params = { project_id: pid, ...(status !== 'all' ? { status } : {}) }
+    const d = await runsApi.list(params)
+    setRuns(d.runs)
+    setProjectRunsCache(pid, status, { runs: d.runs })
+    return d.runs
+  }, [pid, setProjectRunsCache])
+
+  /** 首次 / 过滤切换加载 runs：读缓存 → 无缓存时拉 API */
+  useEffect(() => {
     setRunsLoading(true)
-    runsApi.list({ project_id: pid, ...(statusFilter !== 'all' ? { status: statusFilter } : {}) })
-      .then((d) => setRuns(d.runs))
+    const cached = getProjectRunsCache(pid, statusFilter)
+    if (cached) {
+      setRuns(cached.runs)
+      setRunsLoading(false)
+      return
+    }
+    fetchRunsFromApi(statusFilter)
       .catch(() => {})
       .finally(() => setRunsLoading(false))
-  }, [pid, statusFilter])
+  }, [pid, statusFilter]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { loadProject() }, [loadProject])
-  useEffect(() => { loadRuns() },    [loadRuns])
+  /** 手动刷新（project 元数据 + runs） */
+  const handleRefresh = useCallback(async () => {
+    setRunsRefreshing(true)
+    clearProjectDetailCache(pid)
+    clearProjectRunsCache(pid)
+    try {
+      await Promise.all([
+        fetchProjectFromApi(),
+        fetchRunsFromApi(statusFilter),
+      ])
+    } catch {
+      /* silently ignore */
+    } finally {
+      setRunsRefreshing(false)
+    }
+  }, [pid, statusFilter, clearProjectDetailCache, clearProjectRunsCache, fetchProjectFromApi, fetchRunsFromApi])
 
-  // Navigate to full-screen run page
   const goToRunPage = (variant: 'auto' | 'new' | 'secondary') => {
     navigate(`/solutions/${sid}/projects/${pid}/run?variant=${variant}`)
   }
@@ -162,10 +205,11 @@ export default function ProjectDetailPage() {
     setValidateLoading(true)
     try {
       const res = await runsApi.validateRun(sid, pid, { fix_rounds: 3 })
-      toast.success('验证任务已启动')
+      toast.success('验证任务已启动，前往运行记录查看进度')
       setValidateConfirm(false)
-      setMonitorRunId(res.run_id)
-      loadRuns()
+      // 清 runs 缓存，下次加载可拿到最新数据
+      clearProjectRunsCache(pid)
+      navigate(`/runs/${res.run_id}`)
     } catch {
       toast.error('启动验证失败')
     } finally {
@@ -188,14 +232,8 @@ export default function ProjectDetailPage() {
 
   if (!project) {
     return (
-      <EmptyState
-        icon="🔍"
-        title="Project 不存在"
-        action={
-          <Button variant="secondary" onClick={() => navigate(`/solutions/${sid}`)}>
-            返回 Solution
-          </Button>
-        }
+      <EmptyState icon="🔍" title="Project 不存在"
+        action={<Button variant="secondary" onClick={() => navigate(`/solutions/${sid}`)}>返回 Solution</Button>}
       />
     )
   }
@@ -204,17 +242,13 @@ export default function ProjectDetailPage() {
     <div>
       <PageHeader
         crumbs={[
-          { label: 'Solutions',    to: '/solutions' },
-          { label: project.name,   to: `/solutions/${sid}` },
+          { label: 'Solutions', to: '/solutions' },
+          { label: project.name, to: `/solutions/${sid}` },
           { label: project.name },
         ]}
         actions={
-          <Button
-            variant="ghost"
-            size="xs"
-            icon="⚙"
-            onClick={() => navigate(`/solutions/${sid}/projects/${pid}/config`)}
-          >
+          <Button variant="ghost" size="xs" icon="⚙"
+            onClick={() => navigate(`/solutions/${sid}/projects/${pid}/config`)}>
             配置
           </Button>
         }
@@ -229,54 +263,21 @@ export default function ProjectDetailPage() {
               <TypeBadge   type={project.type} />
               <StatusBadge status={project.status as 'idle' | 'running' | 'success' | 'failed'} />
             </div>
-            {project.description && (
-              <p className="text-sm text-gray-400 mt-1">{project.description}</p>
-            )}
+            {project.description && <p className="text-sm text-gray-400 mt-1">{project.description}</p>}
             {project.last_run_at && (
-              <p className="text-xs text-gray-500 mt-1.5">
-                上次运行 {dayjs(project.last_run_at).fromNow()}
-              </p>
+              <p className="text-xs text-gray-500 mt-1.5">上次运行 {dayjs(project.last_run_at).fromNow()}</p>
             )}
           </div>
-          {/* Run buttons — navigate to full-screen page */}
           <div className="flex items-center gap-2 flex-wrap">
-            <Button variant="primary"   size="sm" icon="⚡" onClick={() => goToRunPage('auto')}>
-              Auto Run
-            </Button>
-            <Button variant="secondary" size="sm" icon="▶" onClick={() => goToRunPage('new')}>
-              New Run
-            </Button>
-            <Button variant="secondary" size="sm" icon="↺" onClick={() => goToRunPage('secondary')}>
-              Secondary
-            </Button>
-            <Button variant="secondary" size="sm" icon="✓" onClick={() => setValidateConfirm(true)}>
-              Validate
-            </Button>
+            <Button variant="primary"   size="sm" icon="⚡" onClick={() => goToRunPage('auto')}>Auto Run</Button>
+            <Button variant="secondary" size="sm" icon="▶" onClick={() => goToRunPage('new')}>New Run</Button>
+            <Button variant="secondary" size="sm" icon="↺" onClick={() => goToRunPage('secondary')}>Secondary</Button>
+            <Button variant="secondary" size="sm" icon="✓" onClick={() => setValidateConfirm(true)}>Validate</Button>
           </div>
         </div>
       </div>
 
-      {/* Inline run monitor (appears after launching validate from this page) */}
-      {monitorRunId && (
-        <div className="mb-5 bg-surface-1 border border-border rounded-xl p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-medium text-gray-300">实时监控</h3>
-            <div className="flex gap-2">
-              <Button variant="ghost" size="xs" onClick={() => navigate(`/runs/${monitorRunId}`)}>
-                全屏查看
-              </Button>
-              <Button variant="ghost" size="xs" onClick={() => { setMonitorRunId(null); loadRuns() }}>
-                收起
-              </Button>
-            </div>
-          </div>
-          <div className="h-72">
-            <RunMonitor runId={monitorRunId} inline />
-          </div>
-        </div>
-      )}
-
-      {/* Project summary (Documenter) */}
+      {/* Project summary */}
       <div className="mb-5">
         <ProjectSummaryPanel solutionId={sid} projectId={pid} />
       </div>
@@ -287,64 +288,45 @@ export default function ProjectDetailPage() {
           <h2 className="text-sm font-medium text-gray-300">运行历史</h2>
           <div className="flex items-center gap-1">
             {(['all', 'running', 'success', 'failed'] as const).map((s) => (
-              <button
-                key={s}
-                onClick={() => setStatusFilter(s)}
+              <button key={s} onClick={() => setStatusFilter(s)}
                 className={`text-[11px] px-2 py-1 rounded transition-colors ${
-                  statusFilter === s
-                    ? 'bg-brand-600/20 text-brand-400'
-                    : 'text-gray-500 hover:text-gray-300'
-                }`}
-              >
+                  statusFilter === s ? 'bg-brand-600/20 text-brand-400' : 'text-gray-500 hover:text-gray-300'
+                }`}>
                 {s === 'all' ? '全部' : s}
               </button>
             ))}
+            {/* 手动刷新缓存 */}
             <button
-              onClick={loadRuns}
-              className="ml-2 text-gray-500 hover:text-gray-300 transition-colors p-1"
-              title="刷新"
+              onClick={handleRefresh}
+              disabled={runsRefreshing}
+              className="ml-2 flex items-center gap-1 p-1 text-gray-500 hover:text-gray-200 disabled:opacity-40 transition-colors"
+              title="刷新数据缓存"
             >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <polyline points="23,4 23,10 17,10" />
-                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-              </svg>
+              <RefreshIcon spinning={runsRefreshing} />
             </button>
           </div>
         </div>
 
         {runsLoading ? (
           <div className="space-y-2">
-            {[...Array(4)].map((_, i) => (
-              <div key={i} className="bg-surface-2 rounded-lg h-14 animate-pulse" />
-            ))}
+            {[...Array(4)].map((_, i) => <div key={i} className="bg-surface-2 rounded-lg h-14 animate-pulse" />)}
           </div>
         ) : filteredRuns.length === 0 ? (
-          <EmptyState
-            icon="⚡"
-            title="暂无运行记录"
-            description="点击「Auto Run」开始 AI 编码任务"
-          />
+          <EmptyState icon="⚡" title="暂无运行记录" description="点击「Auto Run」开始 AI 编码任务" />
         ) : (
           <div className="space-y-2">
             {filteredRuns.map((run) => (
-              <RunRow
-                key={run.run_id}
-                run={run}
-                onClick={() => navigate(`/runs/${run.run_id}`)}
-              />
+              <RunRow key={run.run_id} run={run} onClick={() => navigate(`/runs/${run.run_id}`)} />
             ))}
           </div>
         )}
       </div>
 
       <ConfirmDialog
-        open={validateConfirm}
-        onClose={() => setValidateConfirm(false)}
-        onConfirm={handleValidate}
-        title="启动代码验证"
+        open={validateConfirm} onClose={() => setValidateConfirm(false)}
+        onConfirm={handleValidate} title="启动代码验证"
         message="将对当前工作区代码执行全流程验证（安装依赖 → 测试 → Lint），是否继续？"
-        confirmLabel="开始验证"
-        loading={validateLoading}
+        confirmLabel="开始验证" loading={validateLoading}
       />
     </div>
   )

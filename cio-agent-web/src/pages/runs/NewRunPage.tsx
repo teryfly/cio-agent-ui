@@ -1,6 +1,6 @@
 /**
  * NewRunPage — 全屏运行配置页面
- * 替换原来的弹窗，三列布局：需求描述 | 知识上下文 | 高级选项
+ * 三列布局：需求描述 | 知识上下文 | 高级选项
  */
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
@@ -9,15 +9,95 @@ import { knowledgeApi } from '../../api/knowledge'
 import { runsApi }      from '../../api/runs'
 import { projectsApi }  from '../../api/projects'
 import { useDraftCache } from '../../hooks/useDraftCache'
-import type { KnowledgeDocument, LogLevel, UUID } from '../../api/types'
+import type { KnowledgeDocument, NewRunRequest, LogLevel, UUID } from '../../api/types'
 import Button from '../../components/ui/Button'
 
-// ─── Types ──────────────────────────────────────────────────────────────────
+// ─── Types ───────────────────────────────────────────────────────────────────
 
 type KnowledgeMode = 'all' | 'whitelist' | 'skip'
-type RunVariant = 'new' | 'secondary' | 'auto'
+type RunVariant    = 'new' | 'secondary' | 'auto'
 
-// ─── Knowledge Selector ─────────────────────────────────────────────────────
+// step_filter 是后端支持但 NewRunRequest 类型未声明的扩展字段
+// 用独立接口扩展，避免 spread 带来的 TS 类型错误
+interface ExtendedRunRequest extends NewRunRequest {
+  step_filter?: string[] | null
+}
+
+// ─── Validation Steps ────────────────────────────────────────────────────────
+
+const VALIDATION_STEPS = [
+  { id: 'V1', label: 'V1 · DEPENDENCY',      desc: '安装依赖' },
+  { id: 'V2', label: 'V2 · STATIC_ANALYSIS', desc: 'Linting / 类型检查' },
+  { id: 'V3', label: 'V3 · UNIT_TEST',        desc: '运行单测；覆盖率不足时自动生成测试' },
+  { id: 'V4', label: 'V4 · BUILD_VERIFY',     desc: '构建 / 安装验证' },
+  { id: 'V5', label: 'V5 · SMOKE_TEST',       desc: '入口点冒烟测试' },
+  { id: 'V6', label: 'V6 · REPORT',           desc: '生成验证报告（有错误时生成，全部成功则进入 CI/CD）' },
+] as const
+
+// ─── Step Filter 勾选组件 ─────────────────────────────────────────────────────
+
+function StepFilterCheckboxes({
+  value, onChange,
+}: { value: string[] | null; onChange: (v: string[] | null) => void }) {
+  const allIds  = VALIDATION_STEPS.map((s) => s.id)
+  const enabled = value ?? allIds
+  const isAll   = value === null
+
+  const toggleAll = () => onChange(isAll ? [] : null)
+
+  const toggleStep = (id: string) => {
+    const next = new Set(enabled)
+    if (next.has(id)) next.delete(id)
+    else              next.add(id)
+    const arr = allIds.filter((sid) => next.has(sid))
+    onChange(arr.length === allIds.length ? null : arr)
+  }
+
+  return (
+    <div className="space-y-1.5">
+      {/* 全选 */}
+      <label className="flex items-center gap-2 px-2 py-1.5 rounded-lg border border-brand-600/30 bg-brand-600/5 cursor-pointer select-none">
+        <input
+          type="checkbox"
+          className="accent-brand-500 w-3.5 h-3.5"
+          checked={isAll}
+          onChange={toggleAll}
+        />
+        <span className="text-xs font-semibold text-brand-400">全部步骤</span>
+        <span className="text-[11px] text-gray-500">（V1–V6 均运行）</span>
+      </label>
+
+      {VALIDATION_STEPS.map((step) => {
+        const checked = enabled.includes(step.id)
+        return (
+          <label
+            key={step.id}
+            className={`flex items-start gap-2 px-2 py-1.5 rounded-lg border cursor-pointer select-none transition-colors ${
+              checked ? 'border-border bg-surface-3' : 'border-transparent opacity-50'
+            }`}
+          >
+            <input
+              type="checkbox"
+              className="accent-brand-500 w-3.5 h-3.5 mt-0.5 shrink-0"
+              checked={checked}
+              onChange={() => toggleStep(step.id)}
+            />
+            <div className="min-w-0">
+              <span className="text-[11px] font-mono font-semibold text-gray-200">{step.label}</span>
+              <span className="text-[10px] text-gray-500 ml-1.5">{step.desc}</span>
+            </div>
+          </label>
+        )
+      })}
+
+      <p className="text-[10px] text-gray-600 px-1">
+        V0 (PROJECT_DETECT) 始终自动执行，不可过滤。
+      </p>
+    </div>
+  )
+}
+
+// ─── Knowledge Selector ──────────────────────────────────────────────────────
 
 function KnowledgeSelector({
   solutionId, projectId, mode, onModeChange, selected, onSelectedChange,
@@ -26,7 +106,7 @@ function KnowledgeSelector({
   mode: KnowledgeMode; onModeChange: (m: KnowledgeMode) => void
   selected: Set<UUID>; onSelectedChange: (s: Set<UUID>) => void
 }) {
-  const [docs, setDocs] = useState<KnowledgeDocument[]>([])
+  const [docs,    setDocs]    = useState<KnowledgeDocument[]>([])
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
@@ -45,7 +125,7 @@ function KnowledgeSelector({
   const toggleDoc = (id: UUID) => {
     const next = new Set(selected)
     if (next.has(id)) next.delete(id)
-    else next.add(id)
+    else              next.add(id)
     onSelectedChange(next)
   }
 
@@ -63,12 +143,13 @@ function KnowledgeSelector({
           { val: 'whitelist', label: '白名单模式', desc: '手动勾选文档' },
           { val: 'skip',      label: '跳过',       desc: '不注入任何知识上下文' },
         ] as { val: KnowledgeMode; label: string; desc: string }[]).map(({ val, label, desc }) => (
-          <label key={val}
+          <label
+            key={val}
             className={`flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer border transition-colors ${
               mode === val ? 'border-brand-600/50 bg-brand-600/10' : 'border-transparent hover:bg-surface-3'
-            }`}>
-            <input type="radio" className="accent-brand-500" checked={mode === val}
-              onChange={() => onModeChange(val)} />
+            }`}
+          >
+            <input type="radio" className="accent-brand-500" checked={mode === val} onChange={() => onModeChange(val)} />
             <span className="text-sm text-gray-200">{label}</span>
             <span className="text-xs text-gray-500">（{desc}）</span>
           </label>
@@ -88,15 +169,21 @@ function KnowledgeSelector({
               </div>
               <div className="divide-y divide-border max-h-72 overflow-y-auto">
                 {docs.map((doc) => (
-                  <label key={doc.id}
-                    className="grid grid-cols-[80px_1fr_48px] gap-2 px-3 py-2.5 items-center cursor-pointer hover:bg-surface-3 transition-colors">
+                  <label
+                    key={doc.id}
+                    className="grid grid-cols-[80px_1fr_48px] gap-2 px-3 py-2.5 items-center cursor-pointer hover:bg-surface-3 transition-colors"
+                  >
                     <span className={`text-[10px] font-medium px-1 py-0.5 rounded border w-fit ${scopeCls[doc.scope ?? 'project']}`}>
                       {scopeLabel[doc.scope ?? 'project']}
                     </span>
                     <span className="text-xs text-gray-200 truncate">{doc.title}</span>
                     <div className="flex justify-center">
-                      <input type="checkbox" className="accent-brand-500 w-3.5 h-3.5"
-                        checked={selected.has(doc.id)} onChange={() => toggleDoc(doc.id)} />
+                      <input
+                        type="checkbox"
+                        className="accent-brand-500 w-3.5 h-3.5"
+                        checked={selected.has(doc.id)}
+                        onChange={() => toggleDoc(doc.id)}
+                      />
                     </div>
                   </label>
                 ))}
@@ -115,30 +202,48 @@ function KnowledgeSelector({
 // ─── Advanced Options ────────────────────────────────────────────────────────
 
 function AdvancedOptions({
-  validate, onValidateChange,
-  fixRounds, onFixRoundsChange,
-  logLevel, onLogLevelChange,
+  validate,         onValidateChange,
+  stepFilter,       onStepFilterChange,
+  fixRounds,        onFixRoundsChange,
+  logLevel,         onLogLevelChange,
 }: {
-  validate: boolean; onValidateChange: (v: boolean) => void
-  fixRounds: number; onFixRoundsChange: (n: number) => void
-  logLevel: LogLevel; onLogLevelChange: (l: LogLevel) => void
+  validate:            boolean;       onValidateChange:    (v: boolean) => void
+  stepFilter:          string[] | null; onStepFilterChange: (v: string[] | null) => void
+  fixRounds:           number;        onFixRoundsChange:   (n: number) => void
+  logLevel:            LogLevel;      onLogLevelChange:    (l: LogLevel) => void
 }) {
   return (
     <div className="space-y-4">
+      {/* 自动验证开关 */}
       <label className="flex items-start gap-3 cursor-pointer p-3 rounded-lg border border-transparent hover:bg-surface-3 transition-colors">
-        <input type="checkbox" className="accent-brand-500 mt-0.5"
-          checked={validate} onChange={(e) => onValidateChange(e.target.checked)} />
+        <input
+          type="checkbox"
+          className="accent-brand-500 mt-0.5"
+          checked={validate}
+          onChange={(e) => onValidateChange(e.target.checked)}
+        />
         <div>
           <p className="text-sm text-gray-200">执行后自动验证</p>
-          <p className="text-xs text-gray-500 mt-0.5">完成代码生成后运行验证流程（V0-V6）</p>
+          <p className="text-xs text-gray-500 mt-0.5">完成代码生成后运行验证流程</p>
         </div>
       </label>
+
+      {/* 验证步骤勾选 — 仅在启用验证时显示 */}
+      {validate && (
+        <div className="ml-6 space-y-2">
+          <p className="text-xs font-medium text-gray-400">验证步骤</p>
+          <StepFilterCheckboxes value={stepFilter} onChange={onStepFilterChange} />
+        </div>
+      )}
 
       <div className="space-y-3">
         <div>
           <label className="text-xs font-medium text-gray-400 block mb-1.5">修复轮数</label>
-          <select value={fixRounds} onChange={(e) => onFixRoundsChange(parseInt(e.target.value))}
-            className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-brand-500">
+          <select
+            value={fixRounds}
+            onChange={(e) => onFixRoundsChange(parseInt(e.target.value))}
+            className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-brand-500"
+          >
             {[1, 2, 3, 5, 10].map((n) => (
               <option key={n} value={n}>{n} 轮</option>
             ))}
@@ -147,8 +252,11 @@ function AdvancedOptions({
 
         <div>
           <label className="text-xs font-medium text-gray-400 block mb-1.5">日志级别</label>
-          <select value={logLevel} onChange={(e) => onLogLevelChange(e.target.value as LogLevel)}
-            className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-brand-500">
+          <select
+            value={logLevel}
+            onChange={(e) => onLogLevelChange(e.target.value as LogLevel)}
+            className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-brand-500"
+          >
             {(['DEBUG', 'INFO', 'WARNING', 'ERROR'] as LogLevel[]).map((l) => (
               <option key={l} value={l}>{l}</option>
             ))}
@@ -156,7 +264,7 @@ function AdvancedOptions({
         </div>
       </div>
 
-      {/* Info box */}
+      {/* 运行模式说明 */}
       <div className="bg-surface-2 border border-border rounded-lg p-3 text-[11px] text-gray-500 space-y-1">
         <p className="font-medium text-gray-400">运行模式说明</p>
         <p>• Auto Run — 服务端根据项目是否有运行记录，自动选择 New 或 Secondary</p>
@@ -171,9 +279,9 @@ function AdvancedOptions({
 
 export default function NewRunPage() {
   const { solutionId, projectId } = useParams<{ solutionId: string; projectId: string }>()
-  const navigate = useNavigate()
+  const navigate      = useNavigate()
   const [searchParams] = useSearchParams()
-  const variantParam = (searchParams.get('variant') as RunVariant) ?? 'auto'
+  const variantParam  = (searchParams.get('variant') as RunVariant) ?? 'auto'
 
   const sid = solutionId!
   const pid = projectId!
@@ -181,10 +289,11 @@ export default function NewRunPage() {
   const cacheKey = `draft_run_${pid}_${variantParam}`
   const { draft, updateDraft, clearDraft, isRestored } = useDraftCache(cacheKey)
 
-  const [projectName, setProjectName] = useState('')
+  const [projectName,   setProjectName]   = useState('')
   const [knowledgeMode, setKnowledgeMode] = useState<KnowledgeMode>('all')
   const [selectedDocs,  setSelectedDocs]  = useState<Set<UUID>>(new Set())
   const [validate,      setValidate]      = useState(false)
+  const [stepFilter,    setStepFilter]    = useState<string[] | null>(null)
   const [fixRounds,     setFixRounds]     = useState(3)
   const [logLevel,      setLogLevel]      = useState<LogLevel>('INFO')
   const [loading,       setLoading]       = useState(false)
@@ -205,12 +314,17 @@ export default function NewRunPage() {
     if (!draft.trim()) { toast.error('请输入需求描述'); return }
     setLoading(true)
     try {
-      const payload = {
+      // 用扩展接口类型包含 step_filter
+      const payload: ExtendedRunRequest = {
         requirement:       draft.trim(),
         validate,
         fix_rounds:        validate ? fixRounds : null,
         log_level:         logLevel,
         knowledge_doc_ids: resolveKnowledgeDocIds(),
+      }
+      // step_filter 仅在启用验证且不是"全部"时传递
+      if (validate && stepFilter !== null) {
+        payload.step_filter = stepFilter
       }
 
       let res
@@ -227,27 +341,30 @@ export default function NewRunPage() {
       navigate(`/runs/${res.run_id}`)
     } catch (err: unknown) {
       const code = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
-      if (code === 'project_locked') toast.error('项目正在执行中，请稍后再试')
+      if (code === 'project_locked')           toast.error('项目正在执行中，请稍后再试')
       else if (code === 'workflow_already_running') toast.error('该项目已有运行中的任务')
-      else toast.error('启动失败')
+      else                                     toast.error('启动失败')
     } finally {
       setLoading(false)
     }
   }
 
   const variantLabel: Record<RunVariant, { icon: string; title: string; color: string }> = {
-    auto:      { icon: '⚡', title: 'Auto Run',      color: 'text-brand-400' },
-    new:       { icon: '▶',  title: 'New Run',        color: 'text-green-400' },
-    secondary: { icon: '↺',  title: 'Secondary Run',  color: 'text-amber-400' },
+    auto:      { icon: '⚡', title: 'Auto Run',     color: 'text-brand-400' },
+    new:       { icon: '▶',  title: 'New Run',       color: 'text-green-400' },
+    secondary: { icon: '↺',  title: 'Secondary Run', color: 'text-amber-400' },
   }
   const vl = variantLabel[variantParam]
 
   return (
     <div className="min-h-screen bg-surface-0 flex flex-col">
-      {/* Top bar */}
+
+      {/* ── 顶部导航栏 ──────────────────────────────────────────────────── */}
       <div className="h-14 bg-surface-1 border-b border-border flex items-center px-6 gap-4 shrink-0">
-        <button onClick={() => navigate(-1)}
-          className="text-gray-500 hover:text-gray-300 transition-colors p-1">
+        <button
+          onClick={() => navigate(-1)}
+          className="text-gray-500 hover:text-gray-300 transition-colors p-1"
+        >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <polyline points="15,18 9,12 15,6" />
           </svg>
@@ -255,24 +372,27 @@ export default function NewRunPage() {
         <div className="flex items-center gap-2">
           <span className={`text-lg ${vl.color}`}>{vl.icon}</span>
           <span className="font-semibold text-gray-100">{vl.title}</span>
-          {projectName && (
-            <span className="text-gray-500">— {projectName}</span>
-          )}
+          {projectName && <span className="text-gray-500">— {projectName}</span>}
         </div>
         <div className="flex-1" />
         <Button variant="ghost" size="sm" onClick={() => navigate(-1)} disabled={loading}>
           取消
         </Button>
-        <Button variant="primary" size="sm" onClick={handleSubmit} loading={loading}
-          disabled={!draft.trim()} icon={vl.icon}>
+        <Button
+          variant="primary" size="sm"
+          onClick={handleSubmit}
+          loading={loading}
+          disabled={!draft.trim()}
+          icon={vl.icon}
+        >
           启动任务
         </Button>
       </div>
 
-      {/* Three-column layout */}
-      <div className="flex-1 grid grid-cols-[1fr_280px_260px] gap-0 overflow-hidden">
+      {/* ── 三列布局 ────────────────────────────────────────────────────── */}
+      <div className="flex-1 grid grid-cols-[1fr_280px_280px] gap-0 overflow-hidden">
 
-        {/* Col 1: Requirement */}
+        {/* Col 1：需求描述 */}
         <div className="flex flex-col border-r border-border overflow-hidden">
           <div className="px-6 py-4 border-b border-border bg-surface-1 shrink-0">
             <div className="flex items-center justify-between">
@@ -303,7 +423,7 @@ export default function NewRunPage() {
           </div>
         </div>
 
-        {/* Col 2: Knowledge */}
+        {/* Col 2：知识上下文 */}
         <div className="flex flex-col border-r border-border overflow-hidden">
           <div className="px-4 py-4 border-b border-border bg-surface-1 shrink-0">
             <h2 className="text-sm font-semibold text-gray-100">知识上下文</h2>
@@ -321,7 +441,7 @@ export default function NewRunPage() {
           </div>
         </div>
 
-        {/* Col 3: Advanced */}
+        {/* Col 3：高级选项 */}
         <div className="flex flex-col overflow-hidden">
           <div className="px-4 py-4 border-b border-border bg-surface-1 shrink-0">
             <h2 className="text-sm font-semibold text-gray-100">高级选项</h2>
@@ -329,12 +449,10 @@ export default function NewRunPage() {
           </div>
           <div className="flex-1 p-4 overflow-y-auto">
             <AdvancedOptions
-              validate={validate}
-              onValidateChange={setValidate}
-              fixRounds={fixRounds}
-              onFixRoundsChange={setFixRounds}
-              logLevel={logLevel}
-              onLogLevelChange={setLogLevel}
+              validate={validate}           onValidateChange={setValidate}
+              stepFilter={stepFilter}       onStepFilterChange={setStepFilter}
+              fixRounds={fixRounds}         onFixRoundsChange={setFixRounds}
+              logLevel={logLevel}           onLogLevelChange={setLogLevel}
             />
           </div>
         </div>

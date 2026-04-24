@@ -1,96 +1,107 @@
-import { useEffect, useState, useRef, useCallback } from 'react'
-import { sseUrl } from '../api/client'
-import { useRunStore } from '../store/runStore'
+// File: hooks/useRunEvents.ts
+/**
+ * useRunEvents — 智能轮询运行事件
+ * 
+ * 功能：
+ * 1. 挂载时立即加载
+ * 2. 运行中自动轮询（3秒间隔）
+ * 3. 完成/失败后停止轮询
+ * 4. 提供手动刷新接口
+ */
+import { useState, useCallback, useEffect, useRef } from 'react'
+import { runsApi } from '../api/runs'
+import { apiClient } from '../api/client'
 import type { CIOEvent, RunStatus } from '../api/types'
-
-export function useRunEvents(runId: string | null) {
-  const { appendEvent, updateSession } = useRunStore()
-  const [events, setEvents] = useState<CIOEvent[]>([])
-  const [status, setStatus] = useState<RunStatus>('pending')
-  const lastEventIdRef = useRef(0)
-  const isTerminalRef  = useRef(false)
-
-  const handleEvent = useCallback((event: CIOEvent, runId: string) => {
-    setEvents((prev) => [...prev, event])
-    appendEvent(runId, event)
-
-    if (event.type === 'workflow_complete') {
-      setStatus('success')
-      updateSession(runId, { status: 'success' })
-      isTerminalRef.current = true
+interface UseRunEventsResult {
+  events:  CIOEvent[]
+  status:  RunStatus
+  loading: boolean
+  refresh: () => void
+}
+const POLL_INTERVAL_MS = 3000 // 3秒轮询间隔
+export function useRunEvents(runId: string | null): UseRunEventsResult {
+  const [events,  setEvents]  = useState<CIOEvent[]>([])
+  const [status,  setStatus]  = useState<RunStatus>('pending')
+  const [loading, setLoading] = useState(false)
+  const pollTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const isMountedRef = useRef(true)
+  const fetchData = useCallback(async () => {
+    if (!runId || !isMountedRef.current) return
+    setLoading(true)
+    try {
+      // 1. 获取 run 状态
+      const run = await runsApi.get(runId)
+      if (!isMountedRef.current) return
+      setStatus(run.status)
+      // 2. 尝试获取事件列表（后端若支持 GET /runs/{id}/events?format=list）
+      try {
+        const res = await apiClient.get<{ events: CIOEvent[] }>(
+          `/runs/${runId}/events`,
+          { params: { format: 'list' } }
+        )
+        if (isMountedRef.current && Array.isArray(res.data?.events)) {
+          setEvents(res.data.events)
+        }
+      } catch {
+        // 端点不支持 list 格式时静默忽略
+      }
+    } catch {
+      // run 本身不存在时保持当前状态
+    } finally {
+      if (isMountedRef.current) {
+        setLoading(false)
+      }
     }
-    if (event.type === 'workflow_failed') {
-      setStatus('failed')
-      updateSession(runId, { status: 'failed' })
-      isTerminalRef.current = true
-    }
-  }, [appendEvent, updateSession])
-
+  }, [runId])
+  // 智能轮询逻辑
   useEffect(() => {
-    if (!runId) return
-
-    // Reset state when runId changes
-    setEvents([])
-    setStatus('pending')
-    lastEventIdRef.current = 0
-    isTerminalRef.current = false
-
-    let es: EventSource | null = null
-    let retryTimer: ReturnType<typeof setTimeout>
-    let closed = false
-    let retryDelay = 3000
-
-    const connect = () => {
-      if (closed) return
-
-      const url = sseUrl(`/runs/${runId}/events?last_event_id=${lastEventIdRef.current}`)
-      es = new EventSource(url)
-
-      es.onmessage = (e: MessageEvent) => {
-        if (e.lastEventId) {
-          const parsed = parseInt(e.lastEventId, 10)
-          if (!isNaN(parsed)) {
-            lastEventIdRef.current = parsed
-          }
-        }
-
-        let event: CIOEvent
-        try {
-          event = JSON.parse(e.data) as CIOEvent
-        } catch {
-          return
-        }
-
-        handleEvent(event, runId)
-
-        if (event.type === 'run_result') {
-          es?.close()
-          closed = true
-        }
-
-        // Reset retry delay on success
-        retryDelay = 3000
-      }
-
-      es.onerror = () => {
-        es?.close()
-        if (!closed && !isTerminalRef.current) {
-          retryTimer = setTimeout(() => {
-            retryDelay = Math.min(retryDelay * 1.5, 30000)
-            connect()
-          }, retryDelay)
-        }
-      }
+    if (!runId) {
+      setEvents([])
+      setStatus('pending')
+      return
     }
-
-    connect()
-
+    // 立即执行第一次加载
+    fetchData()
+    // 启动轮询定时器
+    const startPolling = () => {
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current)
+      }
+      pollTimerRef.current = setInterval(() => {
+        fetchData()
+      }, POLL_INTERVAL_MS)
+    }
+    startPolling()
+    // 清理函数
     return () => {
-      closed = true
-      clearTimeout(retryTimer)
-      es?.close()
+      isMountedRef.current = false
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current)
+        pollTimerRef.current = null
+      }
     }
-  }, [runId, handleEvent])
-
-  return { events, status }
+  }, [runId, fetchData])
+  // 当状态变为终态时停止轮询
+  useEffect(() => {
+    const isTerminal = status === 'success' || status === 'failed'
+    if (isTerminal && pollTimerRef.current) {
+      clearInterval(pollTimerRef.current)
+      pollTimerRef.current = null
+    }
+  }, [status])
+  // 组件卸载时清理
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current)
+      }
+    }
+  }, [])
+  return { 
+    events, 
+    status, 
+    loading, 
+    refresh: fetchData 
+  }
 }

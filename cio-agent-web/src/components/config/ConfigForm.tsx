@@ -103,54 +103,126 @@ function SelectInput({
   )
 }
 
-function TagInput({
-  value, onChange, placeholder,
-}: { value: string[] | null; onChange: (v: string[] | null) => void; placeholder?: string }) {
-  const [input, setInput] = useState('')
-  const tags = value ?? []
+// ─── Validation Steps 定义（V0-V6）────────────────────────────────────────────
 
-  const add = () => {
-    const t = input.trim().toUpperCase()
-    if (t && !tags.includes(t)) onChange([...tags, t])
-    setInput('')
-  }
+export const VALIDATION_STEPS = [
+  {
+    id:    'V0',
+    label: 'V0 · PROJECT_DETECT',
+    desc:  '检测语言、框架、测试工具、入口点（始终自动执行，不可跳过）',
+    alwaysOn: true,
+  },
+  {
+    id:    'V1',
+    label: 'V1 · DEPENDENCY',
+    desc:  '安装项目依赖',
+    alwaysOn: false,
+  },
+  {
+    id:    'V2',
+    label: 'V2 · STATIC_ANALYSIS',
+    desc:  'Linting / 类型检查',
+    alwaysOn: false,
+  },
+  {
+    id:    'V3',
+    label: 'V3 · UNIT_TEST',
+    desc:  '运行单测；覆盖率低于 target_coverage 时自动生成测试',
+    alwaysOn: false,
+  },
+  {
+    id:    'V4',
+    label: 'V4 · BUILD_VERIFY',
+    desc:  '构建 / 安装验证',
+    alwaysOn: false,
+  },
+  {
+    id:    'V5',
+    label: 'V5 · SMOKE_TEST',
+    desc:  '入口点冒烟测试',
+    alwaysOn: false,
+  },
+  {
+    id:    'V6',
+    label: 'V6 · REPORT',
+    desc:  '生成验证报告（有错误时生成；全部成功则进入 CI/CD 流程，不生成报告）',
+    alwaysOn: false,
+  },
+] as const
 
-  const remove = (tag: string) => {
-    const next = tags.filter((t) => t !== tag)
-    onChange(next.length === 0 ? null : next)
+// ─── Step Filter 勾选组件 ─────────────────────────────────────────────────────
+
+export function StepFilterCheckboxes({
+  value, onChange,
+}: { value: string[] | null; onChange: (v: string[] | null) => void }) {
+  const filterableIds = VALIDATION_STEPS.filter((s) => !s.alwaysOn).map((s) => s.id)
+  const enabled       = value ?? filterableIds
+  const isAll         = value === null
+
+  const toggleAll = () => onChange(isAll ? [] : null)
+
+  const toggleStep = (id: string) => {
+    const next = new Set(enabled)
+    if (next.has(id)) next.delete(id)
+    else              next.add(id)
+    const arr = filterableIds.filter((sid) => next.has(sid))
+    onChange(arr.length === filterableIds.length ? null : arr)
   }
 
   return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap gap-1.5 min-h-[32px]">
-        {tags.map((tag) => (
-          <span key={tag}
-            className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-brand-600/20 border border-brand-600/40 text-brand-400">
-            {tag}
-            <button type="button" onClick={() => remove(tag)} className="text-brand-600 hover:text-red-400 transition-colors">×</button>
+    <div className="space-y-1.5">
+      {/* V0 — always on, non-interactive */}
+      <div className="flex items-start gap-2 px-2 py-1.5 rounded-lg border border-border/50 bg-surface-3/30 opacity-60">
+        <input
+          type="checkbox"
+          className="accent-brand-500 w-3.5 h-3.5 mt-0.5 shrink-0"
+          checked
+          readOnly
+          disabled
+        />
+        <div className="min-w-0">
+          <span className="text-[11px] font-mono font-semibold text-gray-400">
+            {VALIDATION_STEPS[0].label}
           </span>
-        ))}
-        {tags.length === 0 && (
-          <span className="text-xs text-gray-600 italic">null（运行全部步骤）</span>
-        )}
+          <span className="text-[10px] text-gray-600 ml-1.5">{VALIDATION_STEPS[0].desc}</span>
+        </div>
       </div>
-      <div className="flex gap-2">
-        <input value={input} onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), add())}
-          placeholder={placeholder ?? 'V0 ~ V6，按 Enter 添加'}
-          className="flex-1 max-w-xs bg-surface-2 border border-border rounded-lg px-3 py-1.5 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-brand-500" />
-        <button type="button" onClick={add}
-          className="text-xs px-2 py-1 bg-surface-3 hover:bg-surface-4 text-gray-400 rounded-lg border border-border transition-colors">
-          添加
-        </button>
-        {tags.length > 0 && (
-          <button type="button" onClick={() => onChange(null)}
-            className="text-xs px-2 py-1 text-gray-600 hover:text-gray-400 transition-colors">
-            清空（null）
-          </button>
-        )}
-      </div>
-      <p className="text-[11px] text-gray-600">可选步骤：V0 安装依赖、V1 Lint、V2 类型检查、V3 单测、V4 集成测试、V5 E2E、V6 自定义</p>
+
+      {/* 全选 V1-V6 */}
+      <label className="flex items-center gap-2 px-2 py-1.5 rounded-lg border border-brand-600/30 bg-brand-600/5 cursor-pointer select-none">
+        <input
+          type="checkbox"
+          className="accent-brand-500 w-3.5 h-3.5"
+          checked={isAll}
+          onChange={toggleAll}
+        />
+        <span className="text-xs font-semibold text-brand-400">全部步骤（V1–V6）</span>
+        <span className="text-[11px] text-gray-500">均运行</span>
+      </label>
+
+      {/* V1-V6 */}
+      {VALIDATION_STEPS.filter((s) => !s.alwaysOn).map((step) => {
+        const checked = enabled.includes(step.id)
+        return (
+          <label
+            key={step.id}
+            className={`flex items-start gap-2 px-2 py-1.5 rounded-lg border cursor-pointer select-none transition-colors ${
+              checked ? 'border-border bg-surface-3' : 'border-transparent opacity-50'
+            }`}
+          >
+            <input
+              type="checkbox"
+              className="accent-brand-500 w-3.5 h-3.5 mt-0.5 shrink-0"
+              checked={checked}
+              onChange={() => toggleStep(step.id)}
+            />
+            <div className="min-w-0">
+              <span className="text-[11px] font-mono font-semibold text-gray-200">{step.label}</span>
+              <span className="text-[10px] text-gray-500 ml-1.5">{step.desc}</span>
+            </div>
+          </label>
+        )
+      })}
     </div>
   )
 }
@@ -226,11 +298,18 @@ function ValidationSection({
         <TextInput value={v.model ?? ''} onChange={(e) => set('model', e.target.value)}
           placeholder="default" className="!max-w-xs" />
       </Field>
-      <Field label="步骤过滤 (step_filter)"
-        hint="指定仅运行哪些验证步骤；为 null 则运行 V0-V6 全部步骤">
-        <TagInput value={v.step_filter ?? null}
-          onChange={(val) => set('step_filter', val)} />
+
+      {/* ── step_filter：勾选形式 ──────────────────────────────────────── */}
+      <Field
+        label="验证步骤过滤 (step_filter)"
+        hint="选择要执行的验证步骤；V0 始终执行不可跳过"
+      >
+        <StepFilterCheckboxes
+          value={v.step_filter ?? null}
+          onChange={(val) => set('step_filter', val)}
+        />
       </Field>
+
       <Field label="stdout 预览限制" hint="stdout_preview_limit — CIO 决策时可见的 Claude Code 输出字符数">
         <div className="flex items-center gap-2">
           <NumberInput min={1000} max={2000000} value={v.stdout_preview_limit ?? 200000}

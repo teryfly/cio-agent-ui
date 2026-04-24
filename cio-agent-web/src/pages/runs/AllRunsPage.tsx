@@ -14,32 +14,94 @@ dayjs.locale('zh-cn')
 
 type StatusFilter = 'all' | 'pending' | 'running' | 'success' | 'failed'
 
+/* ── localStorage cache helpers ───────────────────────────────────────────── */
+
+const RUNS_CACHE_KEY = 'all_runs_cache'
+const RUNS_CACHE_TTL = 60 * 1000 // 1 分钟
+
+interface RunsCache {
+  runs:      RunSummary[]
+  total:     number
+  active:    number
+  completed: number
+  filter:    StatusFilter
+  ts:        number
+}
+
+function readRunsCache(filter: StatusFilter): RunsCache | null {
+  try {
+    const raw = localStorage.getItem(RUNS_CACHE_KEY)
+    if (!raw) return null
+    const cache: RunsCache = JSON.parse(raw)
+    if (cache.filter !== filter) return null
+    if (Date.now() - cache.ts > RUNS_CACHE_TTL) return null
+    return cache
+  } catch {
+    return null
+  }
+}
+
+function writeRunsCache(data: Omit<RunsCache, 'ts'>) {
+  try {
+    localStorage.setItem(RUNS_CACHE_KEY, JSON.stringify({ ...data, ts: Date.now() }))
+  } catch { /* ignore */ }
+}
+
+/* ── Refresh icon ─────────────────────────────────────────────────────────── */
+
+function RefreshIcon({ spinning }: { spinning?: boolean }) {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+      className={`mr-1 ${spinning ? 'animate-spin' : ''}`}>
+      <polyline points="23,4 23,10 17,10" />
+      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+    </svg>
+  )
+}
+
+/* ── Main Page ───────────────────────────────────────────────────────────── */
+
 export default function AllRunsPage() {
   const navigate = useNavigate()
-  const [runs,    setRuns]    = useState<RunSummary[]>([])
-  const [loading, setLoading] = useState(true)
-  const [stats,   setStats]   = useState({ total: 0, active: 0, completed: 0 })
-  const [filter,  setFilter]  = useState<StatusFilter>('all')
+  const [runs,       setRuns]       = useState<RunSummary[]>([])
+  const [loading,    setLoading]    = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
+  const [stats,      setStats]      = useState({ total: 0, active: 0, completed: 0 })
+  const [filter,     setFilter]     = useState<StatusFilter>('all')
 
-  const load = useCallback(() => {
-    setLoading(true)
-    runsApi.list(filter !== 'all' ? { status: filter } : undefined)
-      .then((d) => {
-        setRuns(d.runs)
-        setStats({ total: d.total, active: d.active, completed: d.completed })
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false))
+  // Load runs — tries cache first, then API
+  const load = useCallback(async (isManual = false) => {
+    if (isManual) {
+      setRefreshing(true)
+    } else {
+      // Try cache first on initial/filter load
+      const cached = readRunsCache(filter)
+      if (cached) {
+        setRuns(cached.runs)
+        setStats({ total: cached.total, active: cached.active, completed: cached.completed })
+        setLoading(false)
+        return
+      }
+    }
+
+    try {
+      const d = await runsApi.list(filter !== 'all' ? { status: filter } : undefined)
+      setRuns(d.runs)
+      setStats({ total: d.total, active: d.active, completed: d.completed })
+      writeRunsCache({ runs: d.runs, total: d.total, active: d.active, completed: d.completed, filter })
+    } catch {
+      /* silently ignore */
+    } finally {
+      setLoading(false)
+      setRefreshing(false)
+    }
   }, [filter])
 
-  useEffect(() => { load() }, [load])
-
-  // Auto-refresh while there are active runs
+  // Load on mount and when filter changes
   useEffect(() => {
-    if (stats.active === 0) return
-    const t = setInterval(load, 5000)
-    return () => clearInterval(t)
-  }, [stats.active, load])
+    setLoading(true)
+    load(false)
+  }, [load])
 
   const filters: { key: StatusFilter; label: string }[] = [
     { key: 'all',     label: `全部 (${stats.total})` },
@@ -67,11 +129,8 @@ export default function AllRunsPage() {
             全部 {stats.total} 条 · 进行中 {stats.active} 条
           </p>
         </div>
-        <Button variant="ghost" size="sm" onClick={load}>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="mr-1">
-            <polyline points="23,4 23,10 17,10" />
-            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-          </svg>
+        <Button variant="ghost" size="sm" loading={refreshing} onClick={() => load(true)}>
+          <RefreshIcon spinning={refreshing} />
           刷新
         </Button>
       </div>
@@ -153,10 +212,8 @@ export default function AllRunsPage() {
                   )}
                 </div>
 
-                <svg
-                  width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-                  className="text-gray-600 opacity-0 group-hover:opacity-100 shrink-0"
-                >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                  className="text-gray-600 opacity-0 group-hover:opacity-100 shrink-0">
                   <polyline points="9,18 15,12 9,6" />
                 </svg>
               </div>
