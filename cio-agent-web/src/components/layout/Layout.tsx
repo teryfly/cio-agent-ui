@@ -4,14 +4,18 @@ import TopBar  from './TopBar'
 import Sidebar from './Sidebar'
 import { useAppStore  } from '../../store/appStore'
 import { useDataCache } from '../../hooks/useDataCache'
+import { getS4CInfoCached } from '../../api/config'
 
 export default function Layout() {
   const collapsed = useAppStore((s) => s.sidebarCollapsed)
   const { warmUp } = useDataCache()
 
-  // 首次挂载（登录后进入主界面）时预热缓存
+  // 首次挂载（登录后进入主界面）时预热缓存（solutions/projects/knowledge + S4C）
   useEffect(() => {
     warmUp().catch(() => {})
+    // Warm up S4C cache in background — result stored in localStorage for
+    // use by ProjectConfigPage's "Copy config JSON" feature.
+    getS4CInfoCached().catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react'
 import toast from 'react-hot-toast'
-import { configApi } from '../../api/config'
+import {
+  configApi,
+  CLAUDE_ALIASES,
+  readGlobalConfigCache,
+  writeGlobalConfigCache,
+  clearGlobalConfigCache,
+} from '../../api/config'
 import type { GlobalConfig } from '../../api/types'
 import Button from '../../components/ui/Button'
 import ConfigForm from '../../components/config/ConfigForm'
@@ -49,7 +55,6 @@ function sanitizeConfigPayload(config: Partial<GlobalConfig>): Partial<GlobalCon
     }
     payload.validation = v
   } else {
-    // validation 不存在时补充完整默认值
     payload.validation = {
       validate_after_run: false,
       max_fix_rounds: 3,
@@ -61,6 +66,22 @@ function sanitizeConfigPayload(config: Partial<GlobalConfig>): Partial<GlobalCon
   }
 
   return payload as Partial<GlobalConfig>
+}
+
+// ─── Normalize raw config from API ───────────────────────────────────────────
+
+function normalizeConfig(cfg: GlobalConfig): Partial<GlobalConfig> {
+  return {
+    ...cfg,
+    validation: {
+      validate_after_run: cfg.validation?.validate_after_run ?? false,
+      max_fix_rounds:     cfg.validation?.max_fix_rounds     ?? 3,
+      model:              cfg.validation?.model              ?? '',
+      step_filter:        cfg.validation?.step_filter        ?? null,
+      stdout_preview_limit: cfg.validation?.stdout_preview_limit ?? 10000,
+      target_coverage:    cfg.validation?.target_coverage    ?? 80,
+    },
+  }
 }
 
 // ─── S4C info panel ──────────────────────────────────────────────────────────
@@ -132,23 +153,23 @@ export default function ConfigPage() {
   const [tab,         setTab]         = useState<Tab>('general')
   const [validateResult, setValidateResult] = useState<{ shown: boolean; errors: string[] } | null>(null)
 
+  // claude_alias options: always the full static list from the YAML spec
+  const aliasOptions = CLAUDE_ALIASES as readonly string[]
+
   useEffect(() => {
-    // 只需获取配置，不再需要动态别名列表（别名已硬编码）
+    // 1. Try localStorage cache first
+    const cached = readGlobalConfigCache()
+    if (cached) {
+      setConfig(normalizeConfig(cached))
+      setLoading(false)
+      return
+    }
+
+    // 2. Fall back to API — only call /api/v1/config/
     configApi.get()
       .then((cfg) => {
-        // 确保 validation 子对象字段有默认值，防止表单读取 null 崩溃
-        const normalized: Partial<GlobalConfig> = {
-          ...cfg,
-          validation: {
-            validate_after_run: cfg.validation?.validate_after_run ?? false,
-            max_fix_rounds:     cfg.validation?.max_fix_rounds     ?? 3,
-            model:              cfg.validation?.model              ?? '',
-            step_filter:        cfg.validation?.step_filter        ?? null,
-            stdout_preview_limit: cfg.validation?.stdout_preview_limit ?? 200000,
-            target_coverage:    cfg.validation?.target_coverage    ?? 80,
-          },
-        }
-        setConfig(normalized)
+        writeGlobalConfigCache(cfg)
+        setConfig(normalizeConfig(cfg))
       })
       .catch(() => toast.error('加载配置失败'))
       .finally(() => setLoading(false))
@@ -158,6 +179,11 @@ export default function ConfigPage() {
     setSaving(true)
     try {
       await configApi.update(sanitizeConfigPayload(config) as GlobalConfig)
+      // Update cache with latest saved values
+      clearGlobalConfigCache()
+      configApi.get()
+        .then((fresh) => writeGlobalConfigCache(fresh))
+        .catch(() => {})
       toast.success('配置已保存')
       setValidateResult(null)
     } catch {
@@ -244,6 +270,7 @@ export default function ConfigPage() {
             mode="global"
             config={config}
             onChange={setConfig}
+            aliases={aliasOptions as string[]}
           />
         </div>
       )}

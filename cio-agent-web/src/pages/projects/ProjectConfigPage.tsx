@@ -2,7 +2,14 @@ import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { projectsApi } from '../../api/projects'
-import { configApi   } from '../../api/config'
+import { solutionsApi } from '../../api/solutions'
+import {
+  configApi,
+  CLAUDE_ALIASES,
+  readGlobalConfigCache,
+  writeGlobalConfigCache,
+  getS4CInfoCached,
+} from '../../api/config'
 import { useAuthStore } from '../../store/authStore'
 import type { ProjectConfig, GlobalConfig } from '../../api/types'
 import Button        from '../../components/ui/Button'
@@ -75,6 +82,99 @@ function buildDefaultsFromGlobal(global: GlobalConfig): ProjectConfig {
   }
 }
 
+/**
+ * Get global config: prefer cache, fall back to API and cache the result.
+ */
+async function getGlobalConfigCached(): Promise<GlobalConfig> {
+  const cached = readGlobalConfigCache()
+  if (cached) return cached
+  const fresh = await configApi.get()
+  writeGlobalConfigCache(fresh)
+  return fresh
+}
+
+// ─── Copy Config Icon Button ──────────────────────────────────────────────────
+
+interface CopyConfigButtonProps {
+  config: ProjectConfig
+  solutionId: string
+  projectId: string
+  solutionName: string
+  projectName: string
+}
+
+function CopyConfigButton({
+  config,
+  solutionId,
+  projectId,
+  solutionName,
+  projectName,
+}: CopyConfigButtonProps) {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = async () => {
+    try {
+      // Build the real work_dir:
+      //   <solution4cio work_dir>/<solution name>_<solution id>/projects/<project name>_<project id>
+      let workDir: string | undefined
+      const s4c = await getS4CInfoCached()
+      const baseDir = s4c?.solution_dir
+      if (baseDir && solutionName && solutionId && projectName && projectId) {
+        workDir = `${baseDir}/${solutionName}_${solutionId}/projects/${projectName}_${projectId}`
+      }
+
+      const enrichedConfig: ProjectConfig = {
+        ...config,
+        ...(workDir !== undefined ? { work_dir: workDir } : {}),
+      }
+
+      const json = JSON.stringify(enrichedConfig, null, 2)
+      await navigator.clipboard.writeText(json)
+      setCopied(true)
+      toast.success('配置已复制到剪贴板（JSON 格式）')
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      toast.error('复制失败，请检查浏览器剪贴板权限')
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      title="复制配置 JSON 到剪贴板"
+      className={`
+        inline-flex items-center justify-center p-1.5 rounded-lg border transition-all duration-150
+        ${copied
+          ? 'border-green-500/50 text-green-400 bg-green-500/10'
+          : 'border-border text-gray-500 hover:text-gray-200 hover:border-brand-500/50 hover:bg-surface-3'
+        }
+      `}
+    >
+      {copied ? (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+          <polyline points="20,6 9,17 4,12" />
+        </svg>
+      ) : (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+        </svg>
+      )}
+    </button>
+  )
+}
+
+// ─── Reset to Default Button ──────────────────────────────────────────────────
+
+function ResetButton({ onClick, loading }: { onClick: () => void; loading?: boolean }) {
+  return (
+    <Button variant="ghost" size="sm" loading={loading} onClick={onClick}>
+      重置为系统默认
+    </Button>
+  )
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function ProjectConfigPage() {
@@ -83,13 +183,16 @@ export default function ProjectConfigPage() {
   const isAdmin  = useAuthStore((s) => s.isAdmin())
 
   const [config,       setConfig]       = useState<ProjectConfig>(emptyConfig())
-  const [aliases,      setAliases]      = useState<string[]>([])
   const [loading,      setLoading]      = useState(true)
   const [saving,       setSaving]       = useState(false)
   const [resetConfirm, setResetConfirm] = useState(false)
   const [resetLoading, setResetLoading] = useState(false)
   const [isDefault,    setIsDefault]    = useState(false)
   const [projectName,  setProjectName]  = useState('')
+  const [solutionName, setSolutionName] = useState('')
+
+  // claude_alias options: static list from YAML spec
+  const aliasOptions = CLAUDE_ALIASES as readonly string[]
 
   const sid = solutionId!
   const pid = projectId!
@@ -98,13 +201,13 @@ export default function ProjectConfigPage() {
     const load = async () => {
       setLoading(true)
       try {
-        // Fetch project config and alias list in parallel
-        const [res, aliasRes] = await Promise.all([
-          projectsApi.getConfig(sid, pid),
-          configApi.getAliases(),
-        ])
+        // Fetch solution name for work_dir computation
+        solutionsApi.get(sid)
+          .then((sol) => setSolutionName(sol.name))
+          .catch(() => {})
+
+        const res = await projectsApi.getConfig(sid, pid)
         setProjectName(res.project_name)
-        setAliases(aliasRes.aliases)
         setConfig({ ...emptyConfig(), ...res.config })
         setIsDefault(false)
       } catch (err: unknown) {
@@ -114,11 +217,7 @@ export default function ProjectConfigPage() {
         if (code === 'config_not_found' || status === 404) {
           // No project-specific config yet — seed form with system defaults
           try {
-            const [global, aliasRes] = await Promise.all([
-              configApi.get(),
-              configApi.getAliases(),
-            ])
-            setAliases(aliasRes.aliases)
+            const global = await getGlobalConfigCached()
             setConfig(buildDefaultsFromGlobal(global))
             setIsDefault(true)
           } catch {
@@ -126,16 +225,18 @@ export default function ProjectConfigPage() {
             setIsDefault(true)
           }
         } else {
-          // Also attempt to load aliases even on error paths
-          configApi.getAliases()
-            .then((r) => setAliases(r.aliases))
-            .catch(() => {})
           toast.error('加载配置失败')
         }
       } finally {
         setLoading(false)
       }
     }
+
+    // Also fetch project name separately in case getConfig fails with 404
+    projectsApi.get(sid, pid)
+      .then((p) => setProjectName(p.name))
+      .catch(() => {})
+
     load()
   }, [sid, pid]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -155,7 +256,7 @@ export default function ProjectConfigPage() {
   const handleReset = async () => {
     setResetLoading(true)
     try {
-      const global = await configApi.get()
+      const global = await getGlobalConfigCached()
       const reset  = buildDefaultsFromGlobal(global)
       await projectsApi.patchConfig(sid, pid, reset)
       setConfig(reset)
@@ -183,13 +284,25 @@ export default function ProjectConfigPage() {
       <PageHeader
         crumbs={[
           { label: 'Solutions', to: '/solutions' },
-          { label: projectName || pid.slice(0, 8), to: `/solutions/${sid}` },
-          { label: projectName, to: `/solutions/${sid}/projects/${pid}` },
+          { label: solutionName || sid.slice(0, 8), to: `/solutions/${sid}` },
+          { label: projectName || pid.slice(0, 8), to: `/solutions/${sid}/projects/${pid}` },
           { label: '项目配置' },
         ]}
         actions={
           <div className="flex items-center gap-2">
             <Button variant="ghost" size="sm" onClick={() => navigate(-1)}>取消</Button>
+            {/* Reset button in top-right (admin only) */}
+            {isAdmin && (
+              <ResetButton onClick={() => setResetConfirm(true)} loading={resetLoading} />
+            )}
+            {/* Copy config JSON button */}
+            <CopyConfigButton
+              config={config}
+              solutionId={sid}
+              projectId={pid}
+              solutionName={solutionName}
+              projectName={projectName}
+            />
             <Button variant="primary" size="sm" loading={saving} onClick={handleSave}>
               保存修改
             </Button>
@@ -210,7 +323,7 @@ export default function ProjectConfigPage() {
           config={config}
           onChange={setConfig}
           isDefault={isDefault}
-          aliases={aliases}
+          aliases={aliasOptions as string[]}
         />
       </div>
 
@@ -220,12 +333,15 @@ export default function ProjectConfigPage() {
           ⓘ 系统默认由管理员在 /admin/config 中设置；此处覆盖仅影响当前 Project。
         </p>
         <div className="flex items-center gap-2">
-          {isAdmin && (
-            <Button variant="ghost" size="sm" onClick={() => setResetConfirm(true)}>
-              重置为系统默认
-            </Button>
-          )}
           <Button variant="ghost" size="sm" onClick={() => navigate(-1)}>取消</Button>
+          {/* Copy config JSON button (footer) */}
+          <CopyConfigButton
+            config={config}
+            solutionId={sid}
+            projectId={pid}
+            solutionName={solutionName}
+            projectName={projectName}
+          />
           <Button variant="primary" size="sm" loading={saving} onClick={handleSave}>
             保存修改
           </Button>
