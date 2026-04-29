@@ -4,7 +4,7 @@ import toast from 'react-hot-toast'
 import { projectsApi } from '../../api/projects'
 import { configApi   } from '../../api/config'
 import { useAuthStore } from '../../store/authStore'
-import type { ProjectConfig } from '../../api/types'
+import type { ProjectConfig, GlobalConfig } from '../../api/types'
 import Button        from '../../components/ui/Button'
 import ConfirmDialog from '../../components/ui/ConfirmDialog'
 import PageHeader    from '../../components/ui/PageHeader'
@@ -35,15 +35,13 @@ const emptyConfig = (): ProjectConfig => ({
   execution_context_content_limit: 500,
 })
 
-function buildDefaultsFromGlobal(global: {
-  model?: string
-  llm_url?: string
-  file_limit?: number
-  validation?: {
-    validate_after_run?: boolean
-    max_fix_rounds?: number
-  }
-}): ProjectConfig {
+/**
+ * Build project default config from the full GlobalConfig.
+ * All nested fields (git, claude_md, models, execution_context_*, validation)
+ * are inherited directly from global so "Reset to system defaults" truly
+ * reflects what the admin has configured system-wide.
+ */
+function buildDefaultsFromGlobal(global: GlobalConfig): ProjectConfig {
   return {
     model:       global.model ?? '',
     llm_url:     global.llm_url ?? '',
@@ -51,21 +49,27 @@ function buildDefaultsFromGlobal(global: {
     max_tokens:  4096,
     timeout:     300,
     file_limit:  global.file_limit ?? 30,
-    architect_prompt: '',
-    engineer_prompt:  '',
-    models: {},
+    architect_prompt: global.architect_prompt ?? '',
+    engineer_prompt:  global.engineer_prompt  ?? '',
+    models: global.models ?? {},
     validation: {
-      validate_after_run: global.validation?.validate_after_run ?? false,
-      max_fix_rounds:     global.validation?.max_fix_rounds ?? 3,
-      model:              '',
-      step_filter:        null,
-      stdout_preview_limit: 200000,
-      target_coverage:    80,
+      validate_after_run:   global.validation?.validate_after_run   ?? false,
+      max_fix_rounds:       global.validation?.max_fix_rounds       ?? 3,
+      model:                global.validation?.model                ?? '',
+      step_filter:          global.validation?.step_filter          ?? null,
+      stdout_preview_limit: global.validation?.stdout_preview_limit ?? 200000,
+      target_coverage:      global.validation?.target_coverage      ?? 80,
     },
-    claude_md: { enabled: true, model: '', memory_model: '' },
-    git:       { enabled: false },
-    execution_context_max_turns:     10,
-    execution_context_content_limit: 500,
+    claude_md: {
+      enabled:      global.claude_md?.enabled      ?? true,
+      model:        global.claude_md?.model        ?? '',
+      memory_model: global.claude_md?.memory_model ?? '',
+    },
+    git: global.git ?? { enabled: false },
+    execution_context_max_turns:
+      global.execution_context_max_turns     ?? 10,
+    execution_context_content_limit:
+      global.execution_context_content_limit ?? 500,
   }
 }
 

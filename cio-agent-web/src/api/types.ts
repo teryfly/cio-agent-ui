@@ -111,10 +111,6 @@ export interface ClaudeMdConfig {
   memory_model?: string
 }
 
-// ─── Execution context config ─────────────────────────────────────────────────
-
-// (top-level fields in GlobalConfig)
-
 // ─── Git config ───────────────────────────────────────────────────────────────
 
 export interface GitUserConfig {
@@ -147,6 +143,12 @@ export interface GitConfig {
 export interface ProjectConfig {
   model?: string
   llm_url?: string
+  /**
+   * Claude Code CLI 模型别名，覆盖全局设置。
+   * 枚举值: default | best | sonnet | opus | haiku | sonnet[1m] | opus[1m] | opusplan
+   * 留空则继承全局 claude_alias。
+   */
+  claude_alias?: string
   temperature?: number
   max_tokens?: number
   timeout?: number
@@ -169,6 +171,11 @@ export interface GlobalConfig {
   api_key: string
   file_limit: number
   work_dir: string
+  /**
+   * Claude Code CLI 模型别名。
+   * 枚举值: default | best | sonnet | opus | haiku | sonnet[1m] | opus[1m] | opusplan
+   * 留空使用 Claude Code 账号默认模型。
+   */
   claude_alias: string
   architect_prompt?: string
   engineer_prompt?: string

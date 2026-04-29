@@ -1,7 +1,12 @@
 /**
  * ConfigForm — 统一配置表单组件
  * 同时用于全局配置（GlobalConfig）和项目配置（ProjectConfig）
- * 完整覆盖 config.yaml 所有字段
+ * 完整覆盖 config.yaml 所有字段，全局与项目取并集统一展示
+ *
+ * 修复：
+ * 1. Claude 别名改为硬编码枚举（default/best/sonnet/opus/haiku/sonnet[1m]/opus[1m]/opusplan）
+ * 2. 项目级配置补充 claude_alias、各角色模型等字段，与全局配置对齐
+ * 3. 保存时自动将空字符串转为 undefined，避免后端 Pydantic None 校验失败
  */
 import { useState } from 'react'
 import type {
@@ -12,6 +17,20 @@ import type {
   ClaudeMdConfig,
   GitConfig,
 } from '../../api/types'
+
+// ─── Claude 别名枚举（硬编码，对应后端 config.yaml 注释）─────────────────────
+
+export const CLAUDE_ALIASES = [
+  { val: '',            label: '（使用账号默认）' },
+  { val: 'default',     label: 'default' },
+  { val: 'best',        label: 'best' },
+  { val: 'sonnet',      label: 'sonnet' },
+  { val: 'opus',        label: 'opus' },
+  { val: 'haiku',       label: 'haiku' },
+  { val: 'sonnet[1m]',  label: 'sonnet[1m]' },
+  { val: 'opus[1m]',    label: 'opus[1m]' },
+  { val: 'opusplan',    label: 'opusplan' },
+]
 
 // ─── 共用 UI 原语 ─────────────────────────────────────────────────────────────
 
@@ -486,6 +505,7 @@ interface ConfigFormGlobalProps {
   mode: 'global'
   config: Partial<GlobalConfig>
   onChange: (c: Partial<GlobalConfig>) => void
+  /** 已废弃：别名现为硬编码枚举，保留此字段仅为向后兼容 */
   aliases?: string[]
 }
 
@@ -514,7 +534,7 @@ export default function ConfigForm(props: ConfigFormProps) {
 
   const cfg = props.config as Record<string, unknown>
 
-  const validation = (cfg.validation as ReturnType<() => typeof cfg.validation>) ?? {}
+  const validation = (cfg.validation as ValidationConfig | undefined) ?? {}
   const models = (cfg.models as ModelOverrides | undefined)
   const claudeMd = (cfg.claude_md as ClaudeMdConfig | undefined)
   const git = (cfg.git as GitConfig | undefined)
@@ -535,21 +555,26 @@ export default function ConfigForm(props: ConfigFormProps) {
           placeholder="https://api.openai.com" />
       </Field>
 
+      {/* ── Claude 别名：全局和项目都显示 ─────────────────────────────────── */}
+      <Field
+        label="Claude 模型别名 (claude_alias)"
+        hint={isGlobal
+          ? 'Claude Code CLI 模型别名；留空使用账号默认'
+          : '覆盖全局 Claude 别名；留空则继承全局设置'}
+      >
+        <SelectInput
+          value={(cfg.claude_alias as string) ?? ''}
+          onChange={(v) => setField('claude_alias', v)}
+          options={CLAUDE_ALIASES}
+          width="max-w-xs"
+        />
+      </Field>
+
       {isGlobal && (
         <>
           <Field label="API Key" hint="sk-*** / glpat-*** 格式">
             <TextInput value={(cfg.api_key as string) ?? ''} onChange={(e) => setField('api_key', e.target.value)}
               placeholder="sk-…" masked />
-          </Field>
-          <Field label="Claude 模型别名" hint="claude_alias — valid: default/best/sonnet/opus/haiku">
-            <SelectInput
-              value={(cfg.claude_alias as string) ?? ''}
-              onChange={(v) => setField('claude_alias', v)}
-              options={[
-                { val: '',           label: '（账号默认）' },
-                ...((props as ConfigFormGlobalProps).aliases ?? []).map((a) => ({ val: a, label: a })),
-              ]}
-            />
           </Field>
         </>
       )}
@@ -590,7 +615,7 @@ export default function ConfigForm(props: ConfigFormProps) {
           onChange={(e) => setField('file_limit', parseInt(e.target.value))} width="!w-24" />
       </Field>
 
-      {/* ── 各角色模型 ────────────────────────────────────────────────────── */}
+      {/* ── 各角色模型（全局和项目都有）────────────────────────────────────── */}
       <Section title="角色模型" />
       <ModelsSection value={models} onChange={(v) => setField('models', v)} />
 
@@ -614,7 +639,7 @@ export default function ConfigForm(props: ConfigFormProps) {
       {/* ── 验证设置 ──────────────────────────────────────────────────────── */}
       <Section title="验证设置 (validation)" />
       <ValidationSection
-        value={validation as ValidationConfig}
+        value={validation}
         onChange={(v) => setField('validation', v)}
       />
 

@@ -5,18 +5,65 @@ import type { GlobalConfig } from '../../api/types'
 import Button from '../../components/ui/Button'
 import ConfigForm from '../../components/config/ConfigForm'
 
-/* ── Read-only fields that must NOT be sent back to the server ───────────── */
+// ─── Read-only fields that must NOT be sent back to the server ───────────────
 const READ_ONLY_FIELDS = ['config_file_path'] as const
 
+/**
+ * 深度清理配置对象：
+ * 1. 移除只读字段
+ * 2. 将空字符串转为 undefined（避免后端 Pydantic 将 "" 当 None 处理报错）
+ * 3. 为 validation 子对象补充默认值，确保必填字段不为 None
+ */
 function sanitizeConfigPayload(config: Partial<GlobalConfig>): Partial<GlobalConfig> {
-  const payload = { ...config }
+  const payload = { ...config } as Record<string, unknown>
+
+  // 移除只读字段
   for (const field of READ_ONLY_FIELDS) {
-    delete (payload as Record<string, unknown>)[field]
+    delete payload[field]
   }
-  return payload
+
+  // 清理顶层空字符串
+  for (const key of Object.keys(payload)) {
+    if (payload[key] === '') {
+      payload[key] = undefined
+    }
+  }
+
+  // 确保 validation 子对象字段有合理默认值，防止后端收到 None
+  if (payload.validation) {
+    const v = { ...(payload.validation as Record<string, unknown>) }
+    if (v.validate_after_run === undefined || v.validate_after_run === null) {
+      v.validate_after_run = false
+    }
+    if (v.max_fix_rounds === undefined || v.max_fix_rounds === null || v.max_fix_rounds === '') {
+      v.max_fix_rounds = 3
+    }
+    if (v.model === undefined || v.model === null || v.model === '') {
+      v.model = 'default'
+    }
+    if (v.stdout_preview_limit === undefined || v.stdout_preview_limit === null || v.stdout_preview_limit === '') {
+      v.stdout_preview_limit = 200000
+    }
+    if (v.target_coverage === undefined || v.target_coverage === null || v.target_coverage === '') {
+      v.target_coverage = 80
+    }
+    payload.validation = v
+  } else {
+    // validation 不存在时补充完整默认值
+    payload.validation = {
+      validate_after_run: false,
+      max_fix_rounds: 3,
+      model: 'default',
+      step_filter: null,
+      stdout_preview_limit: 200000,
+      target_coverage: 80,
+    }
+  }
+
+  return payload as Partial<GlobalConfig>
 }
 
-/* ── S4C info panel ──────────────────────────────────────────────────────── */
+// ─── S4C info panel ──────────────────────────────────────────────────────────
 
 function S4CPanel() {
   const [data,    setData]    = useState<Record<string, unknown> | null>(null)
@@ -53,7 +100,7 @@ function S4CPanel() {
   )
 }
 
-/* ── Validate banner ─────────────────────────────────────────────────────── */
+// ─── Validate banner ──────────────────────────────────────────────────────────
 
 function ValidateBanner({ errors }: { errors: string[] }) {
   if (errors.length === 0) {
@@ -73,13 +120,12 @@ function ValidateBanner({ errors }: { errors: string[] }) {
   )
 }
 
-/* ── Main Page ───────────────────────────────────────────────────────────── */
+// ─── Main Page ────────────────────────────────────────────────────────────────
 
 type Tab = 'general' | 's4c'
 
 export default function ConfigPage() {
   const [config,      setConfig]      = useState<Partial<GlobalConfig>>({})
-  const [aliases,     setAliases]     = useState<string[]>([])
   const [loading,     setLoading]     = useState(true)
   const [saving,      setSaving]      = useState(false)
   const [validating,  setValidating]  = useState(false)
@@ -87,10 +133,22 @@ export default function ConfigPage() {
   const [validateResult, setValidateResult] = useState<{ shown: boolean; errors: string[] } | null>(null)
 
   useEffect(() => {
-    Promise.all([configApi.get(), configApi.getAliases()])
-      .then(([cfg, al]) => {
-        setConfig(cfg)
-        setAliases(al.aliases)
+    // 只需获取配置，不再需要动态别名列表（别名已硬编码）
+    configApi.get()
+      .then((cfg) => {
+        // 确保 validation 子对象字段有默认值，防止表单读取 null 崩溃
+        const normalized: Partial<GlobalConfig> = {
+          ...cfg,
+          validation: {
+            validate_after_run: cfg.validation?.validate_after_run ?? false,
+            max_fix_rounds:     cfg.validation?.max_fix_rounds     ?? 3,
+            model:              cfg.validation?.model              ?? '',
+            step_filter:        cfg.validation?.step_filter        ?? null,
+            stdout_preview_limit: cfg.validation?.stdout_preview_limit ?? 200000,
+            target_coverage:    cfg.validation?.target_coverage    ?? 80,
+          },
+        }
+        setConfig(normalized)
       })
       .catch(() => toast.error('加载配置失败'))
       .finally(() => setLoading(false))
@@ -186,7 +244,6 @@ export default function ConfigPage() {
             mode="global"
             config={config}
             onChange={setConfig}
-            aliases={aliases}
           />
         </div>
       )}

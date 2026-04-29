@@ -12,9 +12,12 @@ import PageHeader  from '../../components/ui/PageHeader'
 import EmptyState  from '../../components/ui/EmptyState'
 import { StatusBadge } from '../../components/ui/StatusBadge'
 import RunMonitor  from '../projects/components/RunMonitor'
+
 dayjs.extend(relativeTime)
 dayjs.locale('zh-cn')
-/* ── Validation report viewer ────────────────────────────────────────────── */
+
+/* ── Validation report ───────────────────────────────────────────────────── */
+
 const outcomeCls: Record<ValidationOutcome, string> = {
   pass:     'text-green-400 bg-green-400/10 border-green-400/20',
   skip:     'text-gray-400  bg-gray-400/10  border-gray-400/20',
@@ -22,9 +25,10 @@ const outcomeCls: Record<ValidationOutcome, string> = {
   fail:     'text-red-400   bg-red-400/10   border-red-400/20',
   escalate: 'text-orange-400 bg-orange-400/10 border-orange-400/20',
 }
+
 function ValidationReportView({ report }: { report: ValidationReport }) {
   return (
-    <div className="mt-6">
+    <div>
       <div className="flex items-center gap-2 mb-3">
         <div className="flex-1 h-px bg-border" />
         <span className="text-[11px] text-gray-500 font-medium uppercase tracking-widest">验证报告</span>
@@ -62,64 +66,52 @@ function ValidationReportView({ report }: { report: ValidationReport }) {
     </div>
   )
 }
-/* ── Refresh icon ─────────────────────────────────────────────────────────── */
-function RefreshIcon() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="mr-1">
-      <polyline points="23,4 23,10 17,10" />
-      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-    </svg>
-  )
-}
-/* ── localStorage cache helpers ───────────────────────────────────────────── */
+
+/* ── Cache helpers ───────────────────────────────────────────────────────── */
+
 const CACHE_PREFIX = 'run_detail_'
-const CACHE_TTL_MS = 5 * 60 * 1000 // 5 分钟
+const CACHE_TTL_MS = 5 * 60 * 1000
+
 function readRunCache(runId: string): RunDetail | null {
   try {
     const raw = localStorage.getItem(`${CACHE_PREFIX}${runId}`)
     if (!raw) return null
     const { data, ts } = JSON.parse(raw) as { data: RunDetail; ts: number }
-    // Only use cache for terminal states (they won't change)
     if (data.status !== 'success' && data.status !== 'failed') {
       if (Date.now() - ts > CACHE_TTL_MS) return null
     }
     return data
-  } catch {
-    return null
-  }
+  } catch { return null }
 }
+
 function writeRunCache(runId: string, data: RunDetail) {
   try {
     localStorage.setItem(`${CACHE_PREFIX}${runId}`, JSON.stringify({ data, ts: Date.now() }))
   } catch { /* ignore */ }
 }
-/* ── Main Page ────────────────────────────────────────────────────────────── */
+
+/* ── Main page ───────────────────────────────────────────────────────────── */
+
 export default function RunDetailPage() {
   const { runId } = useParams<{ runId: string }>()
   const navigate  = useNavigate()
-  const [run,     setRun]     = useState<RunDetail | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [run,        setRun]        = useState<RunDetail | null>(null)
+  const [loading,    setLoading]    = useState(true)
   const [refreshing, setRefreshing] = useState(false)
-  // ✅ 智能轮询：运行中自动刷新
+
   const loadRun = useCallback(async (isManual = false) => {
     if (!runId) return
-    if (isManual) {
-      setRefreshing(true)
-    }
-    // For manual refresh, skip cache
+    if (isManual) setRefreshing(true)
+
     if (!isManual) {
       const cached = readRunCache(runId)
       if (cached) {
         setRun(cached)
         setLoading(false)
-        // 如果缓存的是运行中状态，继续轮询
-        if (cached.status === 'pending' || cached.status === 'running') {
-          // 继续往下执行，不 return
-        } else {
-          return // 终态直接返回
-        }
+        if (cached.status !== 'pending' && cached.status !== 'running') return
       }
     }
+
     try {
       const data = await runsApi.get(runId)
       setRun(data)
@@ -131,20 +123,17 @@ export default function RunDetailPage() {
       setRefreshing(false)
     }
   }, [runId])
-  // ✅ 初始加载
-  useEffect(() => {
-    loadRun(false)
-  }, [loadRun])
-  // ✅ 智能轮询：运行中每3秒刷新
+
+  useEffect(() => { loadRun(false) }, [loadRun])
+
+  // Poll metadata while active (SSE handles events; this syncs run-level status)
   useEffect(() => {
     if (!run || !runId) return
-    const isActive = run.status === 'pending' || run.status === 'running'
-    if (!isActive) return
-    const timer = setInterval(() => {
-      loadRun(false)
-    }, 3000) // 3秒轮询
-    return () => clearInterval(timer)
+    if (run.status !== 'pending' && run.status !== 'running') return
+    const t = setInterval(() => loadRun(false), 5_000)
+    return () => clearInterval(t)
   }, [run?.status, runId, loadRun])
+
   if (loading) {
     return (
       <div className="space-y-4">
@@ -153,32 +142,26 @@ export default function RunDetailPage() {
       </div>
     )
   }
+
   if (!run) {
     return (
-      <EmptyState
-        icon="🔍"
-        title="Run 不存在"
-        action={
-          <Button variant="secondary" onClick={() => navigate('/runs')}>返回列表</Button>
-        }
-      />
+      <EmptyState icon="🔍" title="Run 不存在"
+        action={<Button variant="secondary" onClick={() => navigate('/runs')}>返回列表</Button>} />
     )
   }
+
   const dur = run.finished_at
     ? dayjs(run.finished_at).diff(dayjs(run.started_at), 'second')
     : null
   const isActive = run.status === 'pending' || run.status === 'running'
+
   const typeLabel: Record<string, string> = {
-    new:           '新建',
-    secondary:     '二次开发',
-    auto:          '自动',
-    validate:      '验证',
-    resume:        '恢复',
-    orchestration: '编排',
-    cicd:          'CI/CD',
+    new: '新建', secondary: '二次开发', auto: '自动',
+    validate: '验证', resume: '恢复', orchestration: '编排', cicd: 'CI/CD',
   }
+
   return (
-    <div>
+    <div className="flex flex-col h-full">
       <PageHeader
         crumbs={[
           { label: 'Runs', to: '/runs' },
@@ -187,69 +170,53 @@ export default function RunDetailPage() {
         ]}
         actions={
           <div className="flex items-center gap-2">
-            {/* ✅ 运行中显示自动刷新提示 */}
             {isActive && (
               <span className="text-[11px] text-blue-400 bg-blue-400/10 border border-blue-400/20 px-2 py-1 rounded flex items-center gap-1">
                 <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" />
-                自动刷新中
+                运行中
               </span>
             )}
-            <Button
-              variant="ghost"
-              size="xs"
-              loading={refreshing}
-              onClick={() => loadRun(true)}
-            >
-              <RefreshIcon />
+            <Button variant="ghost" size="xs" loading={refreshing} onClick={() => loadRun(true)}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="mr-1">
+                <polyline points="23,4 23,10 17,10" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+              </svg>
               刷新
             </Button>
             <Button variant="ghost" size="xs" onClick={() => navigate(-1)}>← 返回</Button>
           </div>
         }
       />
-      {/* Run meta card */}
-      <div className="bg-surface-1 border border-border rounded-xl p-5 mb-5">
+
+      {/* Meta card */}
+      <div className="bg-surface-1 border border-border rounded-xl p-5 mb-4">
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
           <div>
             <p className="text-[11px] text-gray-500 mb-1">状态</p>
-            <div className="flex items-center gap-2">
-              <StatusBadge status={run.status} />
-              {isActive && (
-                <span className="text-[10px] text-amber-400 bg-amber-400/10 border border-amber-400/20 px-1.5 py-0.5 rounded">
-                  进行中
-                </span>
-              )}
-            </div>
+            <StatusBadge status={run.status} />
           </div>
           <div>
             <p className="text-[11px] text-gray-500 mb-1">类型</p>
-            <span className="text-gray-300">{typeLabel[run.run_type] ?? run.run_type}</span>
+            <span className="text-gray-300 text-xs">{typeLabel[run.run_type] ?? run.run_type}</span>
           </div>
           <div>
             <p className="text-[11px] text-gray-500 mb-1">项目</p>
-            <button
-              className="text-brand-400 hover:text-brand-300 transition-colors text-xs"
-              onClick={() => navigate(`/solutions/${run.solution_id}/projects/${run.project_id}`)}
-            >
+            <button className="text-brand-400 hover:text-brand-300 text-xs transition-colors"
+              onClick={() => navigate(`/solutions/${run.solution_id}/projects/${run.project_id}`)}>
               {run.project_name}
             </button>
           </div>
           <div>
             <p className="text-[11px] text-gray-500 mb-1">耗时</p>
-            <span className="text-gray-300">{dur !== null ? `${dur}s` : '进行中…'}</span>
+            <span className="text-gray-300 text-xs">{dur !== null ? `${dur}s` : '进行中…'}</span>
           </div>
           <div>
             <p className="text-[11px] text-gray-500 mb-1">开始时间</p>
-            <span className="text-gray-400 text-xs">
-              {dayjs(run.started_at).format('MM-DD HH:mm:ss')}
-            </span>
+            <span className="text-gray-400 text-xs">{dayjs(run.started_at).format('MM-DD HH:mm:ss')}</span>
           </div>
           {run.finished_at && (
             <div>
               <p className="text-[11px] text-gray-500 mb-1">结束时间</p>
-              <span className="text-gray-400 text-xs">
-                {dayjs(run.finished_at).format('MM-DD HH:mm:ss')}
-              </span>
+              <span className="text-gray-400 text-xs">{dayjs(run.finished_at).format('MM-DD HH:mm:ss')}</span>
             </div>
           )}
           <div>
@@ -258,7 +225,7 @@ export default function RunDetailPage() {
           </div>
           <div>
             <p className="text-[11px] text-gray-500 mb-1">事件数</p>
-            <span className="text-gray-400">{run.events_count}</span>
+            <span className="text-gray-400 text-xs">{run.events_count}</span>
           </div>
         </div>
         {run.error && (
@@ -267,22 +234,13 @@ export default function RunDetailPage() {
           </div>
         )}
       </div>
-      {/* ✅ Event viewer — 使用智能轮询的 RunMonitor */}
+
+      {/* Main monitor — fills remaining viewport height */}
       <div className="bg-surface-1 border border-border rounded-xl p-4 mb-4"
-        style={{ height: 'calc(100vh - 380px)', minHeight: '400px' }}>
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-medium text-gray-300">事件记录</h2>
-          {isActive && (
-            <span className="text-[11px] text-gray-600 bg-surface-3 px-2 py-0.5 rounded flex items-center gap-1">
-              <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" />
-              自动更新中
-            </span>
-          )}
-        </div>
-        <div style={{ height: 'calc(100% - 32px)' }}>
-          <RunMonitor runId={run.run_id} inline />
-        </div>
+        style={{ height: 'calc(100vh - 360px)', minHeight: '420px' }}>
+        <RunMonitor runId={run.run_id} inline />
       </div>
+
       {/* Validation report */}
       {run.result?.validation_report && (
         <div className="bg-surface-1 border border-border rounded-xl p-5">
