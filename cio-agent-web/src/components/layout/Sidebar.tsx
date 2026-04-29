@@ -3,6 +3,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useAppStore   } from '../../store/appStore'
 import { useAuthStore  } from '../../store/authStore'
 import { useRunStore   } from '../../store/runStore'
+import { useDataCache  } from '../../hooks/useDataCache'
 import { solutionsApi } from '../../api/solutions'
 import { runsApi      } from '../../api/runs'
 import type { Solution } from '../../api/types'
@@ -72,6 +73,9 @@ export default function Sidebar() {
   const activeSessions = useRunStore((s) => s.activeSessions)
   const navigate       = useNavigate()
 
+  // 使用 useDataCache 的缓存接口，与其他页面共用同一套缓存键
+  const { getSolutionsListCache, setSolutionsListCache } = useDataCache()
+
   // Active run count fetched once on mount from server
   const [serverActiveCount, setServerActiveCount] = useState(0)
 
@@ -81,14 +85,40 @@ export default function Sidebar() {
       .catch(() => {})
   }, [])
 
-  // Load solutions if store is empty (e.g. hard reload)
+  /**
+   * 加载 solutions：
+   * 1. 优先从 zustand store 取（已有数据则直接用，无需任何网络请求）
+   * 2. store 为空时读 localStorage 缓存（getSolutionsListCache）
+   * 3. 缓存也没有时才请求后端 API，并将结果写入缓存
+   *
+   * 手动刷新由各页面的"刷新缓存"按钮触发（clearSolutionsListCache + fetchFromApi），
+   * Sidebar 本身不提供刷新入口，始终遵循缓存优先策略。
+   */
   useEffect(() => {
-    if (solutions.length === 0) {
-      solutionsApi.list()
-        .then((d) => setSolutions(d.solutions))
-        .catch(() => {})
+    // zustand store 已有数据（来自上次会话持久化或其他页面写入）
+    if (solutions.length > 0) return
+
+    // 尝试读页面级缓存（与 SolutionsPage 共用同一个键）
+    const cached = getSolutionsListCache()
+    if (cached && cached.solutions.length > 0) {
+      setSolutions(cached.solutions)
+      return
     }
-  }, [solutions.length, setSolutions])
+
+    // 缓存没有，回退到 API（冷启动或缓存过期场景）
+    solutionsApi.list()
+      .then((d) => {
+        setSolutions(d.solutions)
+        // 写入缓存（只写 solutions，projectsMap 留给各页面自行填充）
+        const existingCache = getSolutionsListCache()
+        setSolutionsListCache({
+          solutions: d.solutions,
+          projectsMap: existingCache?.projectsMap ?? {},
+        })
+      })
+      .catch(() => {})
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Fetch active count once on mount only — no auto-refresh
   useEffect(() => {
