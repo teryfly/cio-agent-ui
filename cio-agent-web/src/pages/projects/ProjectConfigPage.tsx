@@ -10,10 +10,12 @@ import ConfirmDialog from '../../components/ui/ConfirmDialog'
 import PageHeader    from '../../components/ui/PageHeader'
 import ConfigForm    from '../../components/config/ConfigForm'
 
-/* ── Default config ──────────────────────────────────────────────────────── */
+// ─── Empty / default helpers ──────────────────────────────────────────────────
+
 const emptyConfig = (): ProjectConfig => ({
   model: '',
   llm_url: '',
+  claude_alias: '',
   temperature: 0.7,
   max_tokens: 4096,
   timeout: 300,
@@ -26,7 +28,7 @@ const emptyConfig = (): ProjectConfig => ({
     max_fix_rounds: 3,
     model: '',
     step_filter: null,
-    stdout_preview_limit: 200000,
+    stdout_preview_limit: 10000,
     target_coverage: 80,
   },
   claude_md: { enabled: true, model: '', memory_model: '' },
@@ -36,19 +38,19 @@ const emptyConfig = (): ProjectConfig => ({
 })
 
 /**
- * Build project default config from the full GlobalConfig.
- * All nested fields (git, claude_md, models, execution_context_*, validation)
- * are inherited directly from global so "Reset to system defaults" truly
- * reflects what the admin has configured system-wide.
+ * Build project defaults from the full GlobalConfig so that
+ * "Reset to system defaults" reflects every field the admin configured,
+ * including git, claude_alias, claude_md, models, validation sub-fields, etc.
  */
 function buildDefaultsFromGlobal(global: GlobalConfig): ProjectConfig {
   return {
-    model:       global.model ?? '',
-    llm_url:     global.llm_url ?? '',
-    temperature: 0.7,
-    max_tokens:  4096,
-    timeout:     300,
-    file_limit:  global.file_limit ?? 30,
+    model:        global.model         ?? '',
+    llm_url:      global.llm_url       ?? '',
+    claude_alias: global.claude_alias  ?? '',
+    temperature:  0.7,
+    max_tokens:   4096,
+    timeout:      300,
+    file_limit:   global.file_limit    ?? 30,
     architect_prompt: global.architect_prompt ?? '',
     engineer_prompt:  global.engineer_prompt  ?? '',
     models: global.models ?? {},
@@ -57,7 +59,7 @@ function buildDefaultsFromGlobal(global: GlobalConfig): ProjectConfig {
       max_fix_rounds:       global.validation?.max_fix_rounds       ?? 3,
       model:                global.validation?.model                ?? '',
       step_filter:          global.validation?.step_filter          ?? null,
-      stdout_preview_limit: global.validation?.stdout_preview_limit ?? 200000,
+      stdout_preview_limit: global.validation?.stdout_preview_limit ?? 10000,
       target_coverage:      global.validation?.target_coverage      ?? 80,
     },
     claude_md: {
@@ -73,13 +75,15 @@ function buildDefaultsFromGlobal(global: GlobalConfig): ProjectConfig {
   }
 }
 
-/* ── Main Page ───────────────────────────────────────────────────────────── */
+// ─── Main Page ────────────────────────────────────────────────────────────────
+
 export default function ProjectConfigPage() {
   const { solutionId, projectId } = useParams<{ solutionId: string; projectId: string }>()
-  const navigate  = useNavigate()
-  const isAdmin   = useAuthStore((s) => s.isAdmin())
+  const navigate = useNavigate()
+  const isAdmin  = useAuthStore((s) => s.isAdmin())
 
   const [config,       setConfig]       = useState<ProjectConfig>(emptyConfig())
+  const [aliases,      setAliases]      = useState<string[]>([])
   const [loading,      setLoading]      = useState(true)
   const [saving,       setSaving]       = useState(false)
   const [resetConfirm, setResetConfirm] = useState(false)
@@ -94,26 +98,38 @@ export default function ProjectConfigPage() {
     const load = async () => {
       setLoading(true)
       try {
-        const res = await projectsApi.getConfig(sid, pid)
+        // Fetch project config and alias list in parallel
+        const [res, aliasRes] = await Promise.all([
+          projectsApi.getConfig(sid, pid),
+          configApi.getAliases(),
+        ])
         setProjectName(res.project_name)
-        const merged = { ...emptyConfig(), ...res.config }
-        setConfig(merged)
+        setAliases(aliasRes.aliases)
+        setConfig({ ...emptyConfig(), ...res.config })
         setIsDefault(false)
       } catch (err: unknown) {
         const status = (err as { response?: { status?: number } })?.response?.status
         const code   = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
 
         if (code === 'config_not_found' || status === 404) {
+          // No project-specific config yet — seed form with system defaults
           try {
-            const global = await configApi.get()
-            const defaults = buildDefaultsFromGlobal(global)
-            setConfig(defaults)
+            const [global, aliasRes] = await Promise.all([
+              configApi.get(),
+              configApi.getAliases(),
+            ])
+            setAliases(aliasRes.aliases)
+            setConfig(buildDefaultsFromGlobal(global))
             setIsDefault(true)
           } catch {
             setConfig(emptyConfig())
             setIsDefault(true)
           }
         } else {
+          // Also attempt to load aliases even on error paths
+          configApi.getAliases()
+            .then((r) => setAliases(r.aliases))
+            .catch(() => {})
           toast.error('加载配置失败')
         }
       } finally {
@@ -194,6 +210,7 @@ export default function ProjectConfigPage() {
           config={config}
           onChange={setConfig}
           isDefault={isDefault}
+          aliases={aliases}
         />
       </div>
 

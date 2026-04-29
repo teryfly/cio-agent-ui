@@ -1,12 +1,7 @@
 /**
  * ConfigForm — 统一配置表单组件
  * 同时用于全局配置（GlobalConfig）和项目配置（ProjectConfig）
- * 完整覆盖 config.yaml 所有字段，全局与项目取并集统一展示
- *
- * 修复：
- * 1. Claude 别名改为硬编码枚举（default/best/sonnet/opus/haiku/sonnet[1m]/opus[1m]/opusplan）
- * 2. 项目级配置补充 claude_alias、各角色模型等字段，与全局配置对齐
- * 3. 保存时自动将空字符串转为 undefined，避免后端 Pydantic None 校验失败
+ * 完整覆盖 config.yaml 所有字段
  */
 import { useState } from 'react'
 import type {
@@ -17,20 +12,6 @@ import type {
   ClaudeMdConfig,
   GitConfig,
 } from '../../api/types'
-
-// ─── Claude 别名枚举（硬编码，对应后端 config.yaml 注释）─────────────────────
-
-export const CLAUDE_ALIASES = [
-  { val: '',            label: '（使用账号默认）' },
-  { val: 'default',     label: 'default' },
-  { val: 'best',        label: 'best' },
-  { val: 'sonnet',      label: 'sonnet' },
-  { val: 'opus',        label: 'opus' },
-  { val: 'haiku',       label: 'haiku' },
-  { val: 'sonnet[1m]',  label: 'sonnet[1m]' },
-  { val: 'opus[1m]',    label: 'opus[1m]' },
-  { val: 'opusplan',    label: 'opusplan' },
-]
 
 // ─── 共用 UI 原语 ─────────────────────────────────────────────────────────────
 
@@ -192,29 +173,16 @@ export function StepFilterCheckboxes({
     <div className="space-y-1.5">
       {/* V0 — always on, non-interactive */}
       <div className="flex items-start gap-2 px-2 py-1.5 rounded-lg border border-border/50 bg-surface-3/30 opacity-60">
-        <input
-          type="checkbox"
-          className="accent-brand-500 w-3.5 h-3.5 mt-0.5 shrink-0"
-          checked
-          readOnly
-          disabled
-        />
+        <input type="checkbox" className="accent-brand-500 w-3.5 h-3.5 mt-0.5 shrink-0" checked readOnly disabled />
         <div className="min-w-0">
-          <span className="text-[11px] font-mono font-semibold text-gray-400">
-            {VALIDATION_STEPS[0].label}
-          </span>
+          <span className="text-[11px] font-mono font-semibold text-gray-400">{VALIDATION_STEPS[0].label}</span>
           <span className="text-[10px] text-gray-600 ml-1.5">{VALIDATION_STEPS[0].desc}</span>
         </div>
       </div>
 
       {/* 全选 V1-V6 */}
       <label className="flex items-center gap-2 px-2 py-1.5 rounded-lg border border-brand-600/30 bg-brand-600/5 cursor-pointer select-none">
-        <input
-          type="checkbox"
-          className="accent-brand-500 w-3.5 h-3.5"
-          checked={isAll}
-          onChange={toggleAll}
-        />
+        <input type="checkbox" className="accent-brand-500 w-3.5 h-3.5" checked={isAll} onChange={toggleAll} />
         <span className="text-xs font-semibold text-brand-400">全部步骤（V1–V6）</span>
         <span className="text-[11px] text-gray-500">均运行</span>
       </label>
@@ -223,18 +191,12 @@ export function StepFilterCheckboxes({
       {VALIDATION_STEPS.filter((s) => !s.alwaysOn).map((step) => {
         const checked = enabled.includes(step.id)
         return (
-          <label
-            key={step.id}
+          <label key={step.id}
             className={`flex items-start gap-2 px-2 py-1.5 rounded-lg border cursor-pointer select-none transition-colors ${
               checked ? 'border-border bg-surface-3' : 'border-transparent opacity-50'
-            }`}
-          >
-            <input
-              type="checkbox"
-              className="accent-brand-500 w-3.5 h-3.5 mt-0.5 shrink-0"
-              checked={checked}
-              onChange={() => toggleStep(step.id)}
-            />
+            }`}>
+            <input type="checkbox" className="accent-brand-500 w-3.5 h-3.5 mt-0.5 shrink-0"
+              checked={checked} onChange={() => toggleStep(step.id)} />
             <div className="min-w-0">
               <span className="text-[11px] font-mono font-semibold text-gray-200">{step.label}</span>
               <span className="text-[10px] text-gray-500 ml-1.5">{step.desc}</span>
@@ -317,21 +279,12 @@ function ValidationSection({
         <TextInput value={v.model ?? ''} onChange={(e) => set('model', e.target.value)}
           placeholder="default" className="!max-w-xs" />
       </Field>
-
-      {/* ── step_filter：勾选形式 ──────────────────────────────────────── */}
-      <Field
-        label="验证步骤过滤 (step_filter)"
-        hint="选择要执行的验证步骤；V0 始终执行不可跳过"
-      >
-        <StepFilterCheckboxes
-          value={v.step_filter ?? null}
-          onChange={(val) => set('step_filter', val)}
-        />
+      <Field label="验证步骤过滤 (step_filter)" hint="选择要执行的验证步骤；V0 始终执行不可跳过">
+        <StepFilterCheckboxes value={v.step_filter ?? null} onChange={(val) => set('step_filter', val)} />
       </Field>
-
       <Field label="stdout 预览限制" hint="stdout_preview_limit — CIO 决策时可见的 Claude Code 输出字符数">
         <div className="flex items-center gap-2">
-          <NumberInput min={1000} max={2000000} value={v.stdout_preview_limit ?? 200000}
+          <NumberInput min={1000} max={2000000} value={v.stdout_preview_limit ?? 10000}
             onChange={(e) => set('stdout_preview_limit', parseInt(e.target.value))} width="!w-36" />
           <span className="text-xs text-gray-500">字符</span>
         </div>
@@ -505,7 +458,6 @@ interface ConfigFormGlobalProps {
   mode: 'global'
   config: Partial<GlobalConfig>
   onChange: (c: Partial<GlobalConfig>) => void
-  /** 已废弃：别名现为硬编码枚举，保留此字段仅为向后兼容 */
   aliases?: string[]
 }
 
@@ -514,6 +466,8 @@ interface ConfigFormProjectProps {
   config: ProjectConfig
   onChange: (c: ProjectConfig) => void
   isDefault?: boolean
+  /** Claude alias options fetched from /config/claude-aliases */
+  aliases?: string[]
 }
 
 export type ConfigFormProps = ConfigFormGlobalProps | ConfigFormProjectProps
@@ -523,7 +477,6 @@ export type ConfigFormProps = ConfigFormGlobalProps | ConfigFormProjectProps
 export default function ConfigForm(props: ConfigFormProps) {
   const isGlobal = props.mode === 'global'
 
-  // Type-safe setters
   const setField = <K extends string>(key: K, val: unknown) => {
     if (isGlobal) {
       props.onChange({ ...(props.config as Record<string, unknown>), [key]: val } as Partial<GlobalConfig>)
@@ -532,12 +485,13 @@ export default function ConfigForm(props: ConfigFormProps) {
     }
   }
 
-  const cfg = props.config as Record<string, unknown>
+  const cfg     = props.config as Record<string, unknown>
+  const aliases = props.aliases ?? []
 
   const validation = (cfg.validation as ValidationConfig | undefined) ?? {}
-  const models = (cfg.models as ModelOverrides | undefined)
-  const claudeMd = (cfg.claude_md as ClaudeMdConfig | undefined)
-  const git = (cfg.git as GitConfig | undefined)
+  const models     = (cfg.models as ModelOverrides | undefined)
+  const claudeMd   = (cfg.claude_md as ClaudeMdConfig | undefined)
+  const git        = (cfg.git as GitConfig | undefined)
 
   return (
     <div className="space-y-1">
@@ -555,18 +509,20 @@ export default function ConfigForm(props: ConfigFormProps) {
           placeholder="https://api.openai.com" />
       </Field>
 
-      {/* ── Claude 别名：全局和项目都显示 ─────────────────────────────────── */}
+      {/* claude_alias — global mode 和 project mode 均渲染 */}
       <Field
-        label="Claude 模型别名 (claude_alias)"
+        label="Claude 模型别名"
         hint={isGlobal
-          ? 'Claude Code CLI 模型别名；留空使用账号默认'
-          : '覆盖全局 Claude 别名；留空则继承全局设置'}
+          ? 'claude_alias — valid: default/best/sonnet/opus/haiku'
+          : 'claude_alias — 留空则继承系统默认；valid: default/best/sonnet/opus/haiku'}
       >
         <SelectInput
           value={(cfg.claude_alias as string) ?? ''}
           onChange={(v) => setField('claude_alias', v)}
-          options={CLAUDE_ALIASES}
-          width="max-w-xs"
+          options={[
+            { val: '', label: isGlobal ? '（账号默认）' : '（继承系统默认）' },
+            ...aliases.map((a) => ({ val: a, label: a })),
+          ]}
         />
       </Field>
 
@@ -605,17 +561,19 @@ export default function ConfigForm(props: ConfigFormProps) {
         </>
       )}
 
-      <Field label={isGlobal ? '工作区目录 (work_dir)' : '工作区目录覆盖'} hint="AI 代码生成的根目录">
-        <TextInput value={(cfg.work_dir as string) ?? ''} onChange={(e) => setField('work_dir', e.target.value)}
-          placeholder="./workspace" />
-      </Field>
+      {isGlobal && (
+        <Field label="工作区目录 (work_dir)" hint="AI 代码生成的根目录">
+          <TextInput value={(cfg.work_dir as string) ?? ''} onChange={(e) => setField('work_dir', e.target.value)}
+            placeholder="./workspace" />
+        </Field>
+      )}
 
       <Field label="最大文件数 (file_limit)" hint="单次工作流最多读取的文件数量">
         <NumberInput min={1} max={500} value={(cfg.file_limit as number) ?? 30}
           onChange={(e) => setField('file_limit', parseInt(e.target.value))} width="!w-24" />
       </Field>
 
-      {/* ── 各角色模型（全局和项目都有）────────────────────────────────────── */}
+      {/* ── 各角色模型 ────────────────────────────────────────────────────── */}
       <Section title="角色模型" />
       <ModelsSection value={models} onChange={(v) => setField('models', v)} />
 
