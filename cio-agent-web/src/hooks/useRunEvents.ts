@@ -81,16 +81,19 @@ export function useRunEvents(runId: string | null): UseRunEventsResult {
     }
   }, [])
 
-  /** Poll run metadata to sync status */
+  /** Poll run metadata to sync status display only.
+   *  Must NOT touch isTerminalRef — that would abort the SSE stream
+   *  before it finishes replaying buffered events. */
   const syncMeta = useCallback(async () => {
     if (!runId || !isMountedRef.current) return
     try {
       const run = await runsApi.get(runId)
       if (!isMountedRef.current) return
       setStatus(run.status)
-      if (TERMINAL_STATUSES.includes(run.status)) {
-        isTerminalRef.current = true
-      }
+      // Do NOT set isTerminalRef here. isTerminalRef is managed solely by
+      // SSE events (run_result / workflow_complete). Setting it from a meta
+      // poll would cause closeAll() to abort the SSE stream mid-replay,
+      // dropping all buffered events for completed runs.
     } catch {
       // ignore — SSE is primary source
     }
@@ -246,13 +249,15 @@ export function useRunEvents(runId: string | null): UseRunEventsResult {
     }
   }, [runId]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Stop SSE once terminal status is confirmed
+  // Once terminal status is confirmed, prevent future reconnects.
+  // Do NOT call closeAll() here — status may have arrived from a meta poll
+  // while the SSE stream is still draining buffered events. Aborting the
+  // stream here would drop events before they reach the UI.
   useEffect(() => {
     if (TERMINAL_STATUSES.includes(status)) {
       isTerminalRef.current = true
-      closeAll()
     }
-  }, [status, closeAll])
+  }, [status])
 
   return { events, status, loading, refresh }
 }
