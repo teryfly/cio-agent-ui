@@ -12,6 +12,9 @@ export type LogLevel = 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR'
 export type DocType = 'md' | 'txt' | 'url'
 export type ScopeType = 'solution' | 'project'
 
+/** Programmer CLI selection. 'claude' = Claude Code CLI, 'qoder' = Qoder CLI */
+export type ProgrammerType = 'claude' | 'qoder'
+
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 
 export interface User {
@@ -145,6 +148,12 @@ export interface ProjectConfig {
   llm_url?: string
   /** Claude Code CLI model alias (e.g. "sonnet", "opus"). Overrides global claude_alias. */
   claude_alias?: string
+  /**
+   * Programmer CLI selection.
+   * 'claude' = Anthropic Claude Code CLI (default)
+   * 'qoder'  = Qoder CLI
+   */
+  programmer?: ProgrammerType
   temperature?: number
   max_tokens?: number
   timeout?: number
@@ -168,6 +177,12 @@ export interface GlobalConfig {
   file_limit: number
   work_dir: string
   claude_alias: string
+  /**
+   * Programmer CLI selection.
+   * 'claude' = Anthropic Claude Code CLI (default)
+   * 'qoder'  = Qoder CLI
+   */
+  programmer?: ProgrammerType
   architect_prompt?: string
   engineer_prompt?: string
   cio_prompts?: Record<string, string>
@@ -189,6 +204,11 @@ export interface RunSummary {
   project_name: string
   solution_id: UUID
   solution_name: string
+  /**
+   * v2.3.0: now returns the solution-level workspace path (CIO-Agent work_dir),
+   * not the project subdirectory.
+   */
+  project_dir?: string
   error: string | null
   started_at: string
   finished_at: string | null
@@ -196,7 +216,6 @@ export interface RunSummary {
 }
 
 export interface RunDetail extends RunSummary {
-  project_dir: string
   result: RunResult | null
 }
 
@@ -223,6 +242,7 @@ export interface RunResponse {
   run_type: RunType
   project_id: UUID
   project_name: string
+  solution_id?: UUID
 }
 
 // ─── SSE Events ───────────────────────────────────────────────────────────────

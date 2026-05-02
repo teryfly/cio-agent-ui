@@ -21,22 +21,7 @@ export const configApi = {
     apiClient.put(`/users/${userId}/role`, { role }).then((r) => r.data),
 }
 
-// ── Claude alias constants (from config.yaml comments) ────────────────────────
-// Valid values: default, best, sonnet, opus, haiku, sonnet[1m], opus[1m], opusplan
-export const CLAUDE_ALIASES = [
-  'default',
-  'best',
-  'sonnet',
-  'opus',
-  'haiku',
-  'sonnet[1m]',
-  'opus[1m]',
-  'opusplan',
-] as const
-
-export type ClaudeAlias = typeof CLAUDE_ALIASES[number]
-
-// ── Global config localStorage cache ─────────────────────────────────────────
+// ─── Global config localStorage cache ─────────────────────────────────────────
 
 const GLOBAL_CONFIG_CACHE_KEY = 'cio_global_config_cache'
 const GLOBAL_CONFIG_CACHE_TTL = 5 * 60 * 1000 // 5 minutes
@@ -71,13 +56,13 @@ export function clearGlobalConfigCache(): void {
   } catch { /* ignore */ }
 }
 
-// ── S4C info localStorage cache ───────────────────────────────────────────────
+// ─── S4C info localStorage cache ───────────────────────────────────────────────
 
 const S4C_CACHE_KEY = 'cio_s4c_cache'
 const S4C_CACHE_TTL = 10 * 60 * 1000 // 10 minutes
 
 export interface S4CInfo {
-  /** Root working directory for solution4cio (e.g. /workspace) */
+  /** Root working directory for solution4cio (e.g. /workspace/solutions) */
   solution_dir?: string
   database_url?: string
   lock_timeout?: number

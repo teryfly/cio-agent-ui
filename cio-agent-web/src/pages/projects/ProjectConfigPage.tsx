@@ -5,7 +5,6 @@ import { projectsApi } from '../../api/projects'
 import { solutionsApi } from '../../api/solutions'
 import {
   configApi,
-  CLAUDE_ALIASES,
   readGlobalConfigCache,
   writeGlobalConfigCache,
   getS4CInfoCached,
@@ -15,7 +14,7 @@ import type { ProjectConfig, GlobalConfig } from '../../api/types'
 import Button        from '../../components/ui/Button'
 import ConfirmDialog from '../../components/ui/ConfirmDialog'
 import PageHeader    from '../../components/ui/PageHeader'
-import ConfigForm    from '../../components/config/ConfigForm'
+import ConfigForm, { CLAUDE_ALIASES } from '../../components/config/ConfigForm'
 
 // ─── Empty / default helpers ──────────────────────────────────────────────────
 
@@ -23,6 +22,7 @@ const emptyConfig = (): ProjectConfig => ({
   model: '',
   llm_url: '',
   claude_alias: '',
+  programmer: 'claude',
   temperature: 0.7,
   max_tokens: 4096,
   timeout: 300,
@@ -46,14 +46,14 @@ const emptyConfig = (): ProjectConfig => ({
 
 /**
  * Build project defaults from the full GlobalConfig so that
- * "Reset to system defaults" reflects every field the admin configured,
- * including git, claude_alias, claude_md, models, validation sub-fields, etc.
+ * "Reset to system defaults" reflects every field the admin configured.
  */
 function buildDefaultsFromGlobal(global: GlobalConfig): ProjectConfig {
   return {
     model:        global.model         ?? '',
     llm_url:      global.llm_url       ?? '',
     claude_alias: global.claude_alias  ?? '',
+    programmer:   global.programmer    ?? 'claude',
     temperature:  0.7,
     max_tokens:   4096,
     timeout:      300,
@@ -106,21 +106,20 @@ interface CopyConfigButtonProps {
 function CopyConfigButton({
   config,
   solutionId,
-  projectId,
   solutionName,
-  projectName,
 }: CopyConfigButtonProps) {
   const [copied, setCopied] = useState(false)
 
   const handleCopy = async () => {
     try {
-      // Build the real work_dir:
-      //   <solution4cio work_dir>/<solution name>_<solution id>/projects/<project name>_<project id>
+      // v2.3.0: work_dir is solution-level path.
+      // Format: {solution_dir}/{solution_name}_{solution_id}/
+      // Project subdirectory is created by CIO-Agent on first run_new; do NOT include it here.
       let workDir: string | undefined
       const s4c = await getS4CInfoCached()
       const baseDir = s4c?.solution_dir
-      if (baseDir && solutionName && solutionId && projectName && projectId) {
-        workDir = `${baseDir}/${solutionName}_${solutionId}/projects/${projectName}_${projectId}`
+      if (baseDir && solutionName && solutionId) {
+        workDir = `${baseDir}/${solutionName}_${solutionId}`
       }
 
       const enrichedConfig: ProjectConfig = {
@@ -191,7 +190,7 @@ export default function ProjectConfigPage() {
   const [projectName,  setProjectName]  = useState('')
   const [solutionName, setSolutionName] = useState('')
 
-  // claude_alias options: static list from YAML spec
+  // claude_alias options: static list from ConfigForm constants
   const aliasOptions = CLAUDE_ALIASES as readonly string[]
 
   const sid = solutionId!
@@ -208,7 +207,10 @@ export default function ProjectConfigPage() {
 
         const res = await projectsApi.getConfig(sid, pid)
         setProjectName(res.project_name)
-        setConfig({ ...emptyConfig(), ...res.config })
+        const merged = { ...emptyConfig(), ...res.config }
+        // Ensure programmer defaults to 'claude' if not set
+        if (!merged.programmer) merged.programmer = 'claude'
+        setConfig(merged)
         setIsDefault(false)
       } catch (err: unknown) {
         const status = (err as { response?: { status?: number } })?.response?.status

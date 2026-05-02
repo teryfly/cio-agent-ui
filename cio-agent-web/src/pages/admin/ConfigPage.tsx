@@ -2,14 +2,13 @@ import { useEffect, useState } from 'react'
 import toast from 'react-hot-toast'
 import {
   configApi,
-  CLAUDE_ALIASES,
   readGlobalConfigCache,
   writeGlobalConfigCache,
   clearGlobalConfigCache,
 } from '../../api/config'
 import type { GlobalConfig } from '../../api/types'
 import Button from '../../components/ui/Button'
-import ConfigForm from '../../components/config/ConfigForm'
+import ConfigForm, { CLAUDE_ALIASES } from '../../components/config/ConfigForm'
 
 // ─── Read-only fields that must NOT be sent back to the server ───────────────
 const READ_ONLY_FIELDS = ['config_file_path'] as const
@@ -34,6 +33,9 @@ function sanitizeConfigPayload(config: Partial<GlobalConfig>): Partial<GlobalCon
       payload[key] = undefined
     }
   }
+
+  // programmer: 若未设置则不传（后端默认 claude）
+  // 不做特殊处理，保留原值即可
 
   // 确保 validation 子对象字段有合理默认值，防止后端收到 None
   if (payload.validation) {
@@ -73,6 +75,8 @@ function sanitizeConfigPayload(config: Partial<GlobalConfig>): Partial<GlobalCon
 function normalizeConfig(cfg: GlobalConfig): Partial<GlobalConfig> {
   return {
     ...cfg,
+    // programmer: pass through as-is; defaults to 'claude' if absent
+    programmer: cfg.programmer ?? 'claude',
     validation: {
       validate_after_run: cfg.validation?.validate_after_run ?? false,
       max_fix_rounds:     cfg.validation?.max_fix_rounds     ?? 3,
@@ -153,7 +157,7 @@ export default function ConfigPage() {
   const [tab,         setTab]         = useState<Tab>('general')
   const [validateResult, setValidateResult] = useState<{ shown: boolean; errors: string[] } | null>(null)
 
-  // claude_alias options: always the full static list from the YAML spec
+  // claude_alias options: static list from ConfigForm constants
   const aliasOptions = CLAUDE_ALIASES as readonly string[]
 
   useEffect(() => {
