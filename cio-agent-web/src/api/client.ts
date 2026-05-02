@@ -2,8 +2,15 @@ import axios, { AxiosError } from 'axios'
 import toast from 'react-hot-toast'
 import { useAuthStore } from '../store/authStore'
 
+// In production the frontend may be served from a different host than the API.
+// Set VITE_API_BASE_URL (e.g. http://cio.fhir.store:1576) to reach the backend
+// across hosts. When unset, relative /api/v1 is used (dev proxy or same-host nginx).
+const API_BASE = import.meta.env.VITE_API_BASE_URL
+  ? `${import.meta.env.VITE_API_BASE_URL}/api/v1`
+  : '/api/v1'
+
 export const apiClient = axios.create({
-  baseURL: '/api/v1',
+  baseURL: API_BASE,
   timeout: 30_000,
   headers: { 'Content-Type': 'application/json' },
 })
@@ -63,7 +70,6 @@ apiClient.interceptors.response.use(
  */
 export function sseUrl(path: string): string {
   const token = useAuthStore.getState().token
-  const base  = '/api/v1'
   const sep   = path.includes('?') ? '&' : '?'
-  return `${base}${path}${token ? `${sep}token=${encodeURIComponent(token)}` : ''}`
+  return `${API_BASE}${path}${token ? `${sep}token=${encodeURIComponent(token)}` : ''}`
 }
