@@ -24,7 +24,7 @@ import type { CIOEvent, SSEEventType } from '../../../api/types'
 function isLogEvent(e: CIOEvent): boolean {
   return (
     (e.type === 'info' || e.type === 'warn' || e.type === 'error') &&
-    typeof e.data.logger === 'string'
+    typeof e.data?.logger === 'string'
   )
 }
 
@@ -103,9 +103,10 @@ function StatusBanner({ status, duration, loading }: {
 
 function FlowRow({ event, idx }: { event: CIOEvent; idx: number }) {
   const s   = FLOW_STYLE[event.type] ?? { icon: '·', color: 'text-gray-600' }
-  const msg = event.data.message
-    ?? (event.data.preview ? String(event.data.preview) : null)
-    ?? JSON.stringify(event.data).slice(0, 120)
+  const msg = event.data?.message
+    ?? (event.data?.preview ? String(event.data.preview) : null)
+    ?? (event.data && Object.keys(event.data).length ? JSON.stringify(event.data).slice(0, 120) : null)
+    ?? `[${event.type}]`
 
   return (
     <div className={`flex gap-2 py-1 px-2 text-xs rounded hover:bg-surface-3/40 transition-colors ${idx % 2 === 1 ? 'bg-surface-3/10' : ''}`}>
@@ -182,9 +183,9 @@ function FlowPanel({ events }: { events: CIOEvent[] }) {
 /* ── Log row ────────────────────────────────────────────────────────────── */
 
 function LogRow({ event, idx }: { event: CIOEvent; idx: number }) {
-  const level  = String(event.data.level ?? 'info')
-  const logger = String(event.data.logger ?? '')
-  const msg    = String(event.data.message ?? '')
+  const level  = String(event.data?.level ?? 'info')
+  const logger = String(event.data?.logger ?? '')
+  const msg    = String(event.data?.message ?? '')
   const cfg    = LOG_CFG[level] ?? LOG_CFG.info
   const clean  = msg.startsWith(logger + ': ') ? msg.slice(logger.length + 2) : msg
 

@@ -98,6 +98,7 @@ export default function RunDetailPage() {
   const [run,        setRun]        = useState<RunDetail | null>(null)
   const [loading,    setLoading]    = useState(true)
   const [refreshing, setRefreshing] = useState(false)
+  const [apiError,   setApiError]   = useState(false)
 
   const loadRun = useCallback(async (isManual = false) => {
     if (!runId) return
@@ -115,9 +116,15 @@ export default function RunDetailPage() {
     try {
       const data = await runsApi.get(runId)
       setRun(data)
+      setApiError(false)
       writeRunCache(runId, data)
-    } catch {
-      toast.error('加载运行详情失败')
+    } catch (err: unknown) {
+      // Avoid double-toast: 500 is already handled by the axios interceptor
+      const status = (err as { response?: { status?: number } })?.response?.status
+      if (!status || (status !== 500 && status !== 503)) {
+        toast.error('加载运行详情失败')
+      }
+      setApiError(true)
     } finally {
       setLoading(false)
       setRefreshing(false)
@@ -144,6 +151,25 @@ export default function RunDetailPage() {
   }
 
   if (!run) {
+    // API failed but we have a runId — show monitor-only view so events are still visible
+    if (apiError && runId) {
+      return (
+        <div className="flex flex-col h-full gap-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-amber-400 bg-amber-400/10 border border-amber-400/20 px-3 py-1.5 rounded">
+              无法加载运行元数据，仅显示事件流
+            </span>
+            <div className="flex gap-2">
+              <Button variant="ghost" size="xs" loading={refreshing} onClick={() => loadRun(true)}>重试</Button>
+              <Button variant="ghost" size="xs" onClick={() => navigate('/runs')}>← 返回列表</Button>
+            </div>
+          </div>
+          <div className="flex-1 bg-surface-1 border border-border rounded-xl p-4" style={{ minHeight: '420px' }}>
+            <RunMonitor runId={runId} inline />
+          </div>
+        </div>
+      )
+    }
     return (
       <EmptyState icon="🔍" title="Run 不存在"
         action={<Button variant="secondary" onClick={() => navigate('/runs')}>返回列表</Button>} />

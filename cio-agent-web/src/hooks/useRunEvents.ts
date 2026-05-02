@@ -34,6 +34,8 @@ function parseSseLine(data: string): CIOEvent | null {
     const parsed = JSON.parse(data)
     // Validate minimal shape
     if (parsed && typeof parsed.type === 'string' && parsed.timestamp) {
+      // Normalize missing data field (restored sessions persist lightweight summaries)
+      if (!parsed.data || typeof parsed.data !== 'object') parsed.data = {}
       return parsed as CIOEvent
     }
     return null
