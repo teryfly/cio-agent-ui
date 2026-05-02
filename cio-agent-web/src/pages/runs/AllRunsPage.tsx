@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
 import relativeTime from 'dayjs/plugin/relativeTime'
 import 'dayjs/locale/zh-cn'
+import toast from 'react-hot-toast'
 import { runsApi } from '../../api/runs'
 import type { RunSummary } from '../../api/types'
 import Button     from '../../components/ui/Button'
@@ -68,6 +69,21 @@ export default function AllRunsPage() {
   const [refreshing, setRefreshing] = useState(false)
   const [stats,      setStats]      = useState({ total: 0, active: 0, completed: 0 })
   const [filter,     setFilter]     = useState<StatusFilter>('all')
+  const [retrying,   setRetrying]   = useState<string | null>(null)
+
+  const handleRetry = useCallback(async (run: RunSummary) => {
+    if (retrying) return
+    setRetrying(run.run_id)
+    try {
+      const result = await runsApi.resumeRun(run.solution_id, run.project_id)
+      toast.success('已启动恢复任务')
+      navigate(`/runs/${result.run_id}`)
+    } catch {
+      // errors handled by axios interceptor
+    } finally {
+      setRetrying(null)
+    }
+  }, [retrying, navigate])
 
   // Load runs — tries cache first, then API
   const load = useCallback(async (isManual = false) => {
@@ -211,6 +227,16 @@ export default function AllRunsPage() {
                     <p className="text-[11px] text-red-400 mt-0.5 truncate max-w-lg">{run.error}</p>
                   )}
                 </div>
+
+                {run.status === 'failed' && (
+                  <button
+                    className="text-[11px] text-amber-400 hover:text-amber-300 border border-amber-400/30 hover:border-amber-400/60 px-2 py-0.5 rounded transition-colors shrink-0 opacity-0 group-hover:opacity-100 disabled:opacity-40"
+                    disabled={retrying === run.run_id}
+                    onClick={(e) => { e.stopPropagation(); handleRetry(run) }}
+                  >
+                    {retrying === run.run_id ? '…' : '重试'}
+                  </button>
+                )}
 
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
                   className="text-gray-600 opacity-0 group-hover:opacity-100 shrink-0">

@@ -49,4 +49,13 @@ export const runsApi = {
     apiClient
       .post<RunResponse>(`/solutions/${sid}/projects/${pid}/runs/validate`, data)
       .then((r) => r.data),
+
+  resumeRun: (
+    sid: UUID,
+    pid: UUID,
+    data?: { override_requirement?: string; log_level?: string }
+  ) =>
+    apiClient
+      .post<RunResponse>(`/solutions/${sid}/projects/${pid}/runs/resume`, data ?? {})
+      .then((r) => r.data),
 }
