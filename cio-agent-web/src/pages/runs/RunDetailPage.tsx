@@ -1,5 +1,5 @@
 // File: pages/runs/RunDetailPage.tsx
-import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
 import relativeTime from 'dayjs/plugin/relativeTime'
@@ -7,9 +7,7 @@ import 'dayjs/locale/zh-cn'
 import toast from 'react-hot-toast'
 import { runsApi } from '../../api/runs'
 import { apiClient } from '../../api/client'
-import { useRunEvents } from '../../hooks/useRunEvents'
-import { useAuthStore } from '../../store/authStore'
-import type { RunDetail, ValidationReport, ValidationOutcome, CIOEvent, RunStatus } from '../../api/types'
+import type { RunDetail, ValidationReport, ValidationOutcome } from '../../api/types'
 import Button      from '../../components/ui/Button'
 import PageHeader  from '../../components/ui/PageHeader'
 import EmptyState  from '../../components/ui/EmptyState'
@@ -18,19 +16,6 @@ import { StatusBadge } from '../../components/ui/StatusBadge'
 
 dayjs.extend(relativeTime)
 dayjs.locale('zh-cn')
-
-/* ── Helpers ─────────────────────────────────────────────────────────────── */
-
-function fmt(iso: string) {
-  return new Date(iso).toLocaleTimeString('zh-CN', { hour12: false })
-}
-
-function isLogEvent(e: CIOEvent): boolean {
-  return (
-    (e.type === 'info' || e.type === 'warn' || e.type === 'error') &&
-    typeof e.data?.logger === 'string'
-  )
-}
 
 /* ── Validation report ───────────────────────────────────────────────────── */
 
@@ -83,131 +68,72 @@ function ValidationReportView({ report }: { report: ValidationReport }) {
   )
 }
 
-/* ── WorkflowProgressAxis ────────────────────────────────────────────────── */
+/* ── LiveLogView ─────────────────────────────────────────────────────────── */
 
-interface ProgressNodeProps {
-  label: string
-  startedAt: string
-  completedAt?: string
-  isDone: boolean
-  isActive?: boolean
-  isTerminal?: boolean
-  isFailed?: boolean
-}
+function LiveLogView({ projectName, isActive }: { projectName: string; isActive: boolean }) {
+  const [entries, setEntries] = useState<LogEntry[]>([])
+  const [initialLoading, setInitialLoading] = useState(true)
+  const bottomRef = useRef<HTMLDivElement>(null)
 
-function ProgressNode({ label, startedAt, completedAt, isDone, isActive, isTerminal, isFailed }: ProgressNodeProps) {
-  const iconWrap = isFailed
-    ? 'border-red-400/60 bg-red-400/10'
-    : isDone
-    ? 'border-green-400/60 bg-green-400/10'
-    : isActive
-    ? 'border-blue-400/60 bg-blue-400/10'
-    : 'border-gray-600/40 bg-surface-3'
+  const fetchLatest = useCallback(async () => {
+    try {
+      const { data: fileList } = await apiClient.get<{ logs: LogFile[] }>('/logs/', {
+        params: { project_name: projectName },
+      })
+      if (fileList.logs.length === 0) return
+      const { data } = await apiClient.get<{ entries: LogEntry[] }>(
+        `/logs/${fileList.logs[0].filename}`,
+        { params: { limit: 200 } },
+      )
+      setEntries(data.entries)
+      setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
+    } catch {
+      // ignore — will retry on next tick
+    } finally {
+      setInitialLoading(false)
+    }
+  }, [projectName])
 
-  const labelCls = isFailed
-    ? 'text-red-300'
-    : isDone
-    ? 'text-gray-200'
-    : isActive
-    ? 'text-blue-300'
-    : 'text-gray-500'
+  useEffect(() => { fetchLatest() }, [fetchLatest])
 
-  return (
-    <div className="flex gap-3">
-      {/* Icon + connector */}
-      <div className="flex flex-col items-center shrink-0">
-        <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center ${iconWrap}`}>
-          {isFailed ? (
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="text-red-400">
-              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          ) : isDone && isTerminal ? (
-            <span className="text-[11px]">★</span>
-          ) : isDone ? (
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="text-green-400">
-              <polyline points="20,6 9,17 4,12" />
-            </svg>
-          ) : isActive ? (
-            <span className="w-2.5 h-2.5 rounded-full bg-blue-400 animate-pulse inline-block" />
-          ) : (
-            <span className="w-2 h-2 rounded-full bg-gray-600 inline-block" />
-          )}
-        </div>
-        {!isTerminal && <div className="w-px flex-1 bg-border min-h-[20px]" />}
-      </div>
+  useEffect(() => {
+    if (!isActive) return
+    const t = setInterval(fetchLatest, 5_000)
+    return () => clearInterval(t)
+  }, [isActive, fetchLatest])
 
-      {/* Content */}
-      <div className="pb-4 min-w-0 flex-1">
-        <p className={`text-sm font-medium leading-tight ${labelCls}`}>{label}</p>
-        <p className="text-[11px] text-gray-600 mt-0.5">
-          {fmt(startedAt)}
-          {completedAt && ` → ${fmt(completedAt)}`}
-        </p>
-      </div>
-    </div>
-  )
-}
-
-function WorkflowProgressAxis({ events, status }: { events: CIOEvent[]; status: RunStatus }) {
-  const flowEvents = useMemo(() => events.filter((e) => !isLogEvent(e)), [events])
-
-  const stepStarts   = useMemo(() => flowEvents.filter((e) => e.type === 'step_start'),    [flowEvents])
-  const stepCompletes = useMemo(() => flowEvents.filter((e) => e.type === 'step_complete'), [flowEvents])
-  const workflowDone  = useMemo(() =>
-    flowEvents.find((e) => e.type === 'workflow_complete' || e.type === 'workflow_failed' || e.type === 'run_result'),
-  [flowEvents])
-
-  const isActive = status === 'pending' || status === 'running'
-
-  if (stepStarts.length === 0 && !workflowDone) {
+  if (initialLoading) {
     return (
-      <div className="flex flex-col items-center justify-center py-12 text-gray-600 gap-2">
-        {isActive ? (
-          <>
-            <span className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-            <span className="text-xs text-blue-400">等待任务启动…</span>
-          </>
-        ) : (
-          <>
-            <span className="text-2xl opacity-20">⏳</span>
-            <span className="text-xs">暂无执行记录</span>
-          </>
-        )}
+      <div className="flex items-center justify-center py-8 gap-2 text-xs text-gray-500">
+        <span className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+        加载日志…
+      </div>
+    )
+  }
+
+  if (entries.length === 0) {
+    return (
+      <div className="flex items-center justify-center py-8 text-xs text-gray-600">
+        {isActive ? '等待日志写入…' : '暂无日志'}
       </div>
     )
   }
 
   return (
-    <div className="py-2">
-      {stepStarts.map((start, idx) => {
-        const complete     = stepCompletes[idx]
-        const isDone       = !!complete
-        const isFailed     = !isDone && !!workflowDone && workflowDone.type === 'workflow_failed'
-        const isCurrentStep = !isDone && idx === stepStarts.length - 1 && isActive
-
+    <div className="max-h-72 overflow-y-auto bg-surface-0">
+      {entries.map((entry, i) => {
+        const time = new Date(entry.timestamp).toLocaleTimeString('zh-CN', { hour12: false })
         return (
-          <ProgressNode
-            key={idx}
-            label={String(start.data?.message ?? `步骤 ${idx + 1}`)}
-            startedAt={start.timestamp}
-            completedAt={complete?.timestamp}
-            isDone={isDone}
-            isActive={isCurrentStep}
-            isFailed={isFailed}
-          />
+          <div key={i} className="flex gap-2 px-3 py-0.5 text-[11px] font-mono border-b border-border/10 hover:bg-surface-3/20">
+            <span className="text-gray-600 shrink-0 w-20 text-right">{time}</span>
+            <span className={`shrink-0 w-14 font-semibold ${logLevelCls[entry.level] ?? 'text-gray-400'}`}>
+              {entry.level}
+            </span>
+            <span className="text-gray-300 break-all leading-relaxed flex-1">{entry.message}</span>
+          </div>
         )
       })}
-
-      {workflowDone && (
-        <ProgressNode
-          label={workflowDone.type === 'workflow_failed' ? '任务失败' : '任务完成'}
-          startedAt={workflowDone.timestamp}
-          completedAt={workflowDone.data?.duration_seconds ? workflowDone.timestamp : undefined}
-          isDone
-          isTerminal
-          isFailed={workflowDone.type === 'workflow_failed'}
-        />
-      )}
+      <div ref={bottomRef} />
     </div>
   )
 }
@@ -377,16 +303,12 @@ function writeRunCache(runId: string, data: RunDetail) {
 export default function RunDetailPage() {
   const { runId } = useParams<{ runId: string }>()
   const navigate  = useNavigate()
-  const isAdmin   = useAuthStore((s) => s.isAdmin())
 
   const [run,        setRun]        = useState<RunDetail | null>(null)
   const [loading,    setLoading]    = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [apiError,   setApiError]   = useState(false)
   const [showLogs,   setShowLogs]   = useState(false)
-
-  // Live event subscription
-  const { events, status: liveStatus, loading: eventsLoading, refresh: refreshEvents } = useRunEvents(runId ?? null)
 
   const loadRun = useCallback(async (isManual = false) => {
     if (!runId) return
@@ -430,8 +352,7 @@ export default function RunDetailPage() {
 
   const handleRefresh = useCallback(() => {
     loadRun(true)
-    refreshEvents()
-  }, [loadRun, refreshEvents])
+  }, [loadRun])
 
   if (loading) {
     return (
@@ -468,7 +389,7 @@ export default function RunDetailPage() {
     ? dayjs(run.finished_at).diff(dayjs(run.started_at), 'second')
     : null
   const isActive = run.status === 'pending' || run.status === 'running'
-  const displayStatus = isActive ? liveStatus : run.status
+  const displayStatus = run.status
 
   const typeLabel: Record<string, string> = {
     new: '新建', secondary: '二次开发', auto: '自动',
@@ -554,33 +475,25 @@ export default function RunDetailPage() {
       <div className="bg-surface-1 border border-border rounded-xl">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-border">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-gray-300">执行进度</span>
-            <span className="text-[11px] text-gray-600">{events.filter((e) => !isLogEvent(e)).filter((e) => e.type === 'step_start').length} 个步骤</span>
-            {eventsLoading && (
-              <span className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-            )}
-          </div>
-          {isAdmin && (
-            <button
-              onClick={() => setShowLogs(true)}
-              className="text-[11px] text-brand-400 hover:text-brand-300 flex items-center gap-1 transition-colors"
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                <polyline points="14,2 14,8 20,8" />
-                <line x1="16" y1="13" x2="8" y2="13" />
-                <line x1="16" y1="17" x2="8" y2="17" />
-                <polyline points="10,9 9,9 8,9" />
-              </svg>
-              查看完整日志
-            </button>
-          )}
+          <span className="text-sm font-medium text-gray-300">执行日志</span>
+          <button
+            onClick={() => setShowLogs(true)}
+            className="text-[11px] text-brand-400 hover:text-brand-300 flex items-center gap-1 transition-colors"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14,2 14,8 20,8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+              <polyline points="10,9 9,9 8,9" />
+            </svg>
+            查看完整日志
+          </button>
         </div>
 
-        {/* Timeline */}
+        {/* Live log */}
         <div className="px-5 py-3">
-          <WorkflowProgressAxis events={events} status={displayStatus} />
+          <LiveLogView projectName={run.project_name} isActive={isActive} />
         </div>
       </div>
 
@@ -591,14 +504,12 @@ export default function RunDetailPage() {
         </div>
       )}
 
-      {/* Log viewer modal (admin only) */}
-      {isAdmin && (
-        <LogViewerModal
-          open={showLogs}
-          onClose={() => setShowLogs(false)}
-          projectName={run.project_name}
-        />
-      )}
+      {/* Log viewer modal */}
+      <LogViewerModal
+        open={showLogs}
+        onClose={() => setShowLogs(false)}
+        projectName={run.project_name}
+      />
     </div>
   )
 }
