@@ -1,8 +1,17 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
+import http from 'http'
 
 const BACKEND = 'http://cio.fhir.store:1576'
+
+// Shared keep-alive agent: reuses TCP connections across proxy requests,
+// preventing connection exhaustion when many requests arrive concurrently.
+const backendAgent = new http.Agent({
+  keepAlive: true,
+  maxSockets: 30,
+  keepAliveMsecs: 30_000,
+})
 
 export default defineConfig({
   plugins: [react()],
@@ -20,6 +29,7 @@ export default defineConfig({
       '/api': {
         target: BACKEND,
         changeOrigin: true,
+        agent: backendAgent,
         // Fail fast if backend is unreachable (DNS/TCP), don't hang the browser request.
         timeout: 10_000,
         // Allow up to 2 min for the full request-response cycle (e.g. workflow triggers).
@@ -39,6 +49,7 @@ export default defineConfig({
       '/health': {
         target: BACKEND,
         changeOrigin: true,
+        agent: backendAgent,
         timeout: 10_000,
         proxyTimeout: 10_000,
         configure: (proxy) => {

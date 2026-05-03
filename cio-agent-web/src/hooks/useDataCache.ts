@@ -18,6 +18,26 @@ import type {
   UUID,
 } from '../api/types'
 
+// ─── 并发限制器 ───────────────────────────────────────────────────────────────
+// 限制同时发出的请求数，避免高并发时代理连接耗尽
+function makeLimit(concurrency: number) {
+  let active = 0
+  const queue: Array<() => void> = []
+  return function limit<T>(fn: () => Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const run = () => {
+        active++
+        fn().then(resolve, reject).finally(() => {
+          active--
+          if (queue.length > 0) queue.shift()!()
+        })
+      }
+      if (active < concurrency) run()
+      else queue.push(run)
+    })
+  }
+}
+
 // ─── TTL 常量 ────────────────────────────────────────────────────────────────
 
 const CACHE_KEY   = 'cio_data_cache'
@@ -96,11 +116,14 @@ function clearCache() {
 }
 
 async function fetchAndCache(): Promise<CachedData> {
+  // Max 5 concurrent requests to the proxy to avoid connection exhaustion
+  const limit = makeLimit(5)
+
   const { solutions } = await solutionsApi.list()
 
   const projectResults = await Promise.allSettled(
     solutions.map((sol) =>
-      projectsApi.list(sol.id).then((r) => ({ id: sol.id, projects: r.projects }))
+      limit(() => projectsApi.list(sol.id).then((r) => ({ id: sol.id, projects: r.projects })))
     )
   )
   const projectsMap: Record<UUID, Project[]> = {}
@@ -114,36 +137,40 @@ async function fetchAndCache(): Promise<CachedData> {
   const knowledgeBindings: CachedData['knowledgeBindings'] = []
 
   await Promise.allSettled(
-    solutions.map(async (sol) => {
-      try {
-        const { documents } = await knowledgeApi.listBySolution(sol.id)
-        for (const doc of documents) {
-          knowledgeBindings.push({
-            docId: doc.id,
-            scopeType: 'solution',
-            scopeId: sol.id,
-            label: `Solution: ${sol.name}`,
-          })
-        }
-      } catch { /* ignore */ }
-    })
-  )
-
-  await Promise.allSettled(
-    solutions.flatMap((sol) =>
-      (projectsMap[sol.id] ?? []).map(async (proj) => {
+    solutions.map((sol) =>
+      limit(async () => {
         try {
-          const { documents } = await knowledgeApi.listByProject(sol.id, proj.id, false)
+          const { documents } = await knowledgeApi.listBySolution(sol.id)
           for (const doc of documents) {
             knowledgeBindings.push({
               docId: doc.id,
-              scopeType: 'project',
-              scopeId: proj.id,
-              label: `${sol.name} / ${proj.name}`,
+              scopeType: 'solution',
+              scopeId: sol.id,
+              label: `Solution: ${sol.name}`,
             })
           }
         } catch { /* ignore */ }
       })
+    )
+  )
+
+  await Promise.allSettled(
+    solutions.flatMap((sol) =>
+      (projectsMap[sol.id] ?? []).map((proj) =>
+        limit(async () => {
+          try {
+            const { documents } = await knowledgeApi.listByProject(sol.id, proj.id, false)
+            for (const doc of documents) {
+              knowledgeBindings.push({
+                docId: doc.id,
+                scopeType: 'project',
+                scopeId: proj.id,
+                label: `${sol.name} / ${proj.name}`,
+              })
+            }
+          } catch { /* ignore */ }
+        })
+      )
     )
   )
 
