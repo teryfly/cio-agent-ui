@@ -28,8 +28,19 @@ apiClient.interceptors.request.use((config) => {
 apiClient.interceptors.response.use(
   (res) => res,
   (err: AxiosError<{ error: string; message: string }>) => {
-    const status = err.response?.status
-    const code   = err.response?.data?.error
+    // ── Network-level failures (proxy unreachable, DNS failure, connection refused) ──
+    // err.response is undefined; the request never reached the backend.
+    if (!err.response) {
+      if (err.code === 'ECONNABORTED' || err.code === 'ERR_CANCELED') {
+        toast.error('请求超时，请检查网络连接')
+      } else {
+        toast.error('无法连接到服务器，请检查网络或稍后重试')
+      }
+      return Promise.reject(err)
+    }
+
+    const status = err.response.status
+    const code   = err.response.data?.error
 
     // 401 errors on auth endpoints should not trigger logout
     const isAuthEndpoint = err.config?.url?.includes('/auth/')
@@ -48,6 +59,12 @@ apiClient.interceptors.response.use(
 
     if (status === 423) {
       toast.error('该项目正在执行中，请稍后再试')
+      return Promise.reject(err)
+    }
+
+    // Proxy/gateway errors — backend was unreachable or overloaded
+    if (status === 502 || status === 503 || status === 504) {
+      toast.error('服务暂时不可用，请稍后重试')
       return Promise.reject(err)
     }
 

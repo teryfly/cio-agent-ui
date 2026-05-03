@@ -14,6 +14,17 @@ export const authApi = {
   init: (data: RegisterRequest) =>
     apiClient.post<User & { message: string }>('/admin/init', data).then((r) => r.data),
 
-  health: () =>
-    fetch('/health').then((r) => r.json()) as Promise<{ status: string; db: string }>,
+  health: async (): Promise<{ status: string; db: string }> => {
+    // Use native fetch (not apiClient) since /health is outside /api/v1 prefix.
+    // Apply a 5 s timeout so a hung backend doesn't block the UI indefinitely.
+    const controller = new AbortController()
+    const id = setTimeout(() => controller.abort(), 5_000)
+    try {
+      const r = await fetch('/health', { signal: controller.signal })
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      return r.json()
+    } finally {
+      clearTimeout(id)
+    }
+  },
 }
