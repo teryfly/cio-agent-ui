@@ -233,6 +233,7 @@ interface LogEntry {
 const logLevelCls: Record<string, string> = {
   DEBUG:   'text-gray-500',
   INFO:    'text-blue-400',
+  WARN:    'text-amber-400',
   WARNING: 'text-amber-400',
   ERROR:   'text-red-400',
 }
