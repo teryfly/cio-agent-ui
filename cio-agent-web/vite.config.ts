@@ -3,9 +3,7 @@ import react from '@vitejs/plugin-react'
 import path from 'path'
 import http from 'http'
 
-// Backend runs on the same machine — use loopback instead of the public IP
-// (cio.fhir.store → 182.147.234.76) to avoid going through the network stack.
-const BACKEND = 'http://127.0.0.1:1576'
+const BACKEND = 'http://cio.fhir.store:1576'
 
 // No keepalive: uvicorn closes connections immediately after responding, which
 // races against Node reusing a pooled socket and causes "socket hang up".
