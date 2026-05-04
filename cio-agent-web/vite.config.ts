@@ -15,6 +15,11 @@ const backendAgent = new http.Agent({
   keepAliveMsecs: 1_000,
 })
 
+// Track which sockets have already been instrumented to avoid adding
+// duplicate error listeners on keep-alive socket reuse (would trigger
+// MaxListenersExceededWarning after 10 reuses of the same socket).
+const instrumentedSockets = new WeakSet<import('net').Socket>()
+
 // Destroy free sockets after 3 s. Node's http.Agent has no built-in
 // freeSocketTimeout — without this, idle sockets live forever in the pool
 // and trigger ECONNRESET when the backend closes them on its side first.
@@ -58,7 +63,10 @@ export default defineConfig({
           // them from the pool instead of reusing them for the next request.
           proxy.on('proxyReq', (proxyReq) => {
             proxyReq.on('socket', (socket) => {
-              socket.on('error', () => socket.destroy())
+              if (!instrumentedSockets.has(socket)) {
+                instrumentedSockets.add(socket)
+                socket.on('error', () => socket.destroy())
+              }
             })
           })
         },
