@@ -6,6 +6,7 @@ import 'dayjs/locale/zh-cn'
 import toast from 'react-hot-toast'
 import { solutionsApi } from '../../api/solutions'
 import { projectsApi  } from '../../api/projects'
+import { getGlobalConfigCached, buildDefaultsFromGlobal } from '../../api/config'
 import { knowledgeApi } from '../../api/knowledge'
 import { useDataCache  } from '../../hooks/useDataCache'
 import type {
@@ -56,11 +57,15 @@ function NewProjectModal({
     if (!form.name.trim()) return
     setLoading(true)
     try {
-      await projectsApi.create(solutionId, {
+      const project = await projectsApi.create(solutionId, {
         name: form.name,
         project_type: form.type,
         description: form.description,
       })
+      try {
+        const global = await getGlobalConfigCached()
+        await projectsApi.patchConfig(solutionId, project.id, buildDefaultsFromGlobal(global))
+      } catch { /* ignore — project created, config will use backend defaults */ }
       toast.success('Project 已创建')
       onSaved()
       onClose()

@@ -4,118 +4,18 @@ import toast from 'react-hot-toast'
 import { projectsApi } from '../../api/projects'
 import { solutionsApi } from '../../api/solutions'
 import {
-  configApi,
-  readGlobalConfigCache,
-  writeGlobalConfigCache,
   getS4CInfoCached,
+  getGlobalConfigCached,
+  buildDefaultsFromGlobal,
+  emptyProjectConfig,
 } from '../../api/config'
 import { useAuthStore } from '../../store/authStore'
-import type { ProjectConfig, GlobalConfig } from '../../api/types'
+import type { ProjectConfig } from '../../api/types'
 import Button        from '../../components/ui/Button'
 import ConfirmDialog from '../../components/ui/ConfirmDialog'
 import PageHeader    from '../../components/ui/PageHeader'
 import ConfigForm, { CLAUDE_ALIASES } from '../../components/config/ConfigForm'
 
-// ─── Empty / default helpers ──────────────────────────────────────────────────
-
-const emptyConfig = (): ProjectConfig => ({
-  model: 'Minimax-M2.7',
-  llm_url: 'https://api.poe.com',
-  claude_alias: 'haiku',
-  programmer: 'claude',
-  temperature: 0.05,
-  max_tokens: 4096,
-  timeout: 300,
-  file_limit: 30,
-  architect_prompt: 'default',
-  engineer_prompt: 'default',
-  models: {
-    cio_naming_model: 'default',
-    cio_decision_model: 'default',
-    cio_executor_model: 'default',
-    architect_model: 'default',
-    engineer_model: 'default',
-    documenter_model: 'default',
-  },
-  validation: {
-    validate_after_run: false,
-    max_fix_rounds: 3,
-    model: 'default',
-    step_filter: ['V3'],
-    stdout_preview_limit: 60000,
-    target_coverage: 60,
-  },
-  claude_md: { enabled: true, model: 'Minimax-M2.7', memory_model: 'default' },
-  git: {
-    enabled: true,
-    user: { name: 'CIO-Agent2', email: 'cio@noreply.local' },
-    gitlab: {
-      token: 'glpat-hsssW3dIfgvp3uhP3C5ky2M6MQpvOjEKdTpnY3J6OA8.01.171fk7rxk',
-      base_url: 'https://gitlab.com',
-      namespace: 'EastAI',
-      branch: 'main',
-    },
-    push_strategy: 'on_complete',
-    branch_strategy: 'feature_branch',
-    feature_branch_prefix: 'cio',
-    init_on_new_project: true,
-    commit_on_phase: true,
-    tag_on_validate: true,
-    gitignore_cio_logs: true,
-  },
-  execution_context_max_turns: 10,
-  execution_context_content_limit: 500,
-})
-
-/**
- * Build project defaults from the full GlobalConfig so that
- * "Reset to system defaults" reflects every field the admin configured.
- */
-function buildDefaultsFromGlobal(global: GlobalConfig): ProjectConfig {
-  const base = emptyConfig()
-  return {
-    model:        global.model         ?? base.model,
-    llm_url:      global.llm_url       ?? base.llm_url,
-    claude_alias: global.claude_alias  ?? base.claude_alias,
-    programmer:   global.programmer    ?? base.programmer,
-    temperature:  base.temperature,
-    max_tokens:   base.max_tokens,
-    timeout:      base.timeout,
-    file_limit:   global.file_limit    ?? base.file_limit,
-    architect_prompt: global.architect_prompt ?? base.architect_prompt,
-    engineer_prompt:  global.engineer_prompt  ?? base.engineer_prompt,
-    models: global.models ?? base.models,
-    validation: {
-      validate_after_run:   global.validation?.validate_after_run   ?? base.validation!.validate_after_run,
-      max_fix_rounds:       global.validation?.max_fix_rounds       ?? base.validation!.max_fix_rounds,
-      model:                global.validation?.model                ?? base.validation!.model,
-      step_filter:          global.validation?.step_filter          ?? base.validation!.step_filter,
-      stdout_preview_limit: global.validation?.stdout_preview_limit ?? base.validation!.stdout_preview_limit,
-      target_coverage:      global.validation?.target_coverage      ?? base.validation!.target_coverage,
-    },
-    claude_md: {
-      enabled:      global.claude_md?.enabled      ?? base.claude_md!.enabled,
-      model:        global.claude_md?.model        ?? base.claude_md!.model,
-      memory_model: global.claude_md?.memory_model ?? base.claude_md!.memory_model,
-    },
-    git: global.git ?? base.git,
-    execution_context_max_turns:
-      global.execution_context_max_turns     ?? base.execution_context_max_turns,
-    execution_context_content_limit:
-      global.execution_context_content_limit ?? base.execution_context_content_limit,
-  }
-}
-
-/**
- * Get global config: prefer cache, fall back to API and cache the result.
- */
-async function getGlobalConfigCached(): Promise<GlobalConfig> {
-  const cached = readGlobalConfigCache()
-  if (cached) return cached
-  const fresh = await configApi.get()
-  writeGlobalConfigCache(fresh)
-  return fresh
-}
 
 // ─── Copy Config Icon Button ──────────────────────────────────────────────────
 
@@ -205,7 +105,7 @@ export default function ProjectConfigPage() {
   const navigate = useNavigate()
   const isAdmin  = useAuthStore((s) => s.isAdmin())
 
-  const [config,       setConfig]       = useState<ProjectConfig>(emptyConfig())
+  const [config,       setConfig]       = useState<ProjectConfig>(emptyProjectConfig())
   const [loading,      setLoading]      = useState(true)
   const [saving,       setSaving]       = useState(false)
   const [resetConfirm, setResetConfirm] = useState(false)
@@ -231,7 +131,7 @@ export default function ProjectConfigPage() {
 
         const res = await projectsApi.getConfig(sid, pid)
         setProjectName(res.project_name)
-        const merged = { ...emptyConfig(), ...res.config }
+        const merged = { ...emptyProjectConfig(), ...res.config }
         // Ensure programmer defaults to 'claude' if not set
         if (!merged.programmer) merged.programmer = 'claude'
         setConfig(merged)
@@ -247,7 +147,7 @@ export default function ProjectConfigPage() {
             setConfig(buildDefaultsFromGlobal(global))
             setIsDefault(true)
           } catch {
-            setConfig(emptyConfig())
+            setConfig(emptyProjectConfig())
             setIsDefault(true)
           }
         } else {
