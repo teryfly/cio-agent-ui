@@ -306,6 +306,8 @@ function SolutionCard({
 /* ── Validate confirm ─────────────────────────────────────────────────────── */
 interface ValidateTarget { solutionId: string; projectId: string }
 
+type SortBy = 'name' | 'updated_at' | 'latest_project'
+
 /* ── Main Page ───────────────────────────────────────────────────────────── */
 export default function SolutionsPage() {
   const { solutions, setSolutions } = useAppStore()
@@ -327,6 +329,9 @@ export default function SolutionsPage() {
 
   const [validateTarget,  setValidateTarget]  = useState<ValidateTarget | null>(null)
   const [validateLoading, setValidateLoading] = useState(false)
+
+  const [filterText, setFilterText] = useState('')
+  const [sortBy,     setSortBy]     = useState<SortBy>('updated_at')
 
   /** 从缓存中读取数据并更新状态 */
   const applyCache = useCallback((cached: { solutions: Solution[]; projectsMap: Record<string, Project[]> }) => {
@@ -434,15 +439,80 @@ export default function SolutionsPage() {
     }
   }
 
+  // ── Filter + Sort ─────────────────────────────────────────────────────────
+  const displayedSolutions = (() => {
+    const q = filterText.trim().toLowerCase()
+    let filtered = q
+      ? solutions.filter((sol) => {
+          if (sol.name.toLowerCase().includes(q)) return true
+          const projs = projectsMap[sol.id] ?? []
+          return projs.some((p) => p.name.toLowerCase().includes(q))
+        })
+      : solutions
+
+    const sorted = [...filtered].sort((a, b) => {
+      if (sortBy === 'name') {
+        return a.name.localeCompare(b.name)
+      }
+      if (sortBy === 'updated_at') {
+        return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+      }
+      // latest_project: max created_at of projects, fallback to solution created_at
+      const latestA = (projectsMap[a.id] ?? []).reduce(
+        (mx, p) => Math.max(mx, new Date(p.created_at).getTime()), new Date(a.created_at).getTime()
+      )
+      const latestB = (projectsMap[b.id] ?? []).reduce(
+        (mx, p) => Math.max(mx, new Date(p.created_at).getTime()), new Date(b.created_at).getTime()
+      )
+      return latestB - latestA
+    })
+    return sorted
+  })()
+
   return (
     <div>
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
+      <div className="flex items-center justify-between mb-6 gap-3 flex-wrap">
+        <div className="shrink-0">
           <h1 className="text-lg font-semibold text-gray-100">My Solutions</h1>
-          <p className="text-xs text-gray-500 mt-0.5">{solutions.length} 个 Solution</p>
+          <p className="text-xs text-gray-500 mt-0.5">
+            {filterText ? `${displayedSolutions.length} / ${solutions.length}` : solutions.length} 个 Solution
+          </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-1 justify-end flex-wrap">
+          {/* 搜索过滤 */}
+          <div className="relative">
+            <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <input
+              type="text"
+              value={filterText}
+              onChange={(e) => setFilterText(e.target.value)}
+              placeholder="过滤 solution / project..."
+              className="bg-surface-2 border border-border rounded-lg pl-7 pr-8 py-1.5 text-xs text-gray-100 placeholder-gray-600 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500/50 w-48"
+            />
+            {filterText && (
+              <button
+                onClick={() => setFilterText('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300 transition-colors"
+              >
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            )}
+          </div>
+          {/* 排序 */}
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as SortBy)}
+            className="bg-surface-2 border border-border rounded-lg px-2.5 py-1.5 text-xs text-gray-300 focus:outline-none focus:border-brand-500 cursor-pointer"
+          >
+            <option value="name">名称排序</option>
+            <option value="updated_at">修改时间</option>
+            <option value="latest_project">最新项目时间</option>
+          </select>
           {/* 手动刷新缓存按钮 */}
           <button
             onClick={handleRefresh}
@@ -478,9 +548,13 @@ export default function SolutionsPage() {
             </Button>
           }
         />
+      ) : displayedSolutions.length === 0 ? (
+        <div className="text-center py-16 text-gray-500 text-sm">
+          没有匹配「{filterText}」的 Solution 或 Project
+        </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {solutions.map((sol) => (
+          {displayedSolutions.map((sol) => (
             <SolutionCard
               key={sol.id}
               sol={sol}
