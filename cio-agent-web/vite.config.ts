@@ -6,15 +6,21 @@ import http from 'http'
 const BACKEND = 'http://cio.fhir.store:1576'
 
 // Shared keep-alive agent: reuses TCP connections across proxy requests.
-// keepAliveMsecs is intentionally short (4 s) so the client-side pool
-// evicts idle connections before the backend's own TCP idle-timeout fires,
-// preventing stale-connection ECONNRESET / socket-hang-up errors.
+// Free sockets are destroyed after 3 s so the pool always evicts them before
+// the backend's own TCP idle-timeout fires, preventing ECONNRESET on reuse.
 const backendAgent = new http.Agent({
   keepAlive: true,
   maxSockets: 30,
   maxFreeSockets: 10,
-  keepAliveMsecs: 4_000,
-  timeout: 10_000,
+  keepAliveMsecs: 1_000,
+})
+
+// Destroy free sockets after 3 s. Node's http.Agent has no built-in
+// freeSocketTimeout — without this, idle sockets live forever in the pool
+// and trigger ECONNRESET when the backend closes them on its side first.
+backendAgent.on('free', (socket: import('net').Socket) => {
+  const t = setTimeout(() => socket.destroy(), 3_000)
+  socket.once('close', () => clearTimeout(t))
 })
 
 export default defineConfig({
