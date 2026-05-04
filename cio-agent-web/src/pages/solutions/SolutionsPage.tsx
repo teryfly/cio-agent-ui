@@ -178,9 +178,12 @@ function NewProjectModal({
 
 /* ── Project mini-row ─────────────────────────────────────────────────────── */
 function ProjectMiniRow({
-  project, solutionId, onValidate,
+  project, solutionId, onValidate, onConfig, onDeleteProject,
 }: {
-  project: Project; solutionId: string; onValidate: (pid: string) => void
+  project: Project; solutionId: string
+  onValidate: (pid: string) => void
+  onConfig: (pid: string) => void
+  onDeleteProject: (pid: string, name: string) => void
 }) {
   const navigate = useNavigate()
 
@@ -219,6 +222,20 @@ function ProjectMiniRow({
         >
           ✓
         </button>
+        <button
+          title="配置"
+          onClick={(e) => { e.stopPropagation(); onConfig(project.id) }}
+          className="text-[10px] px-1.5 py-0.5 rounded bg-surface-4 text-gray-400 hover:text-yellow-400 hover:bg-yellow-400/10 transition-colors border border-border"
+        >
+          ⚙
+        </button>
+        <button
+          title="删除"
+          onClick={(e) => { e.stopPropagation(); onDeleteProject(project.id, project.name) }}
+          className="text-[10px] px-1.5 py-0.5 rounded bg-surface-4 text-gray-400 hover:text-red-400 hover:bg-red-400/10 transition-colors border border-border"
+        >
+          ✕
+        </button>
       </div>
     </div>
   )
@@ -227,13 +244,21 @@ function ProjectMiniRow({
 /* ── Solution Card ────────────────────────────────────────────────────────── */
 function SolutionCard({
   sol, projects, projectsLoading, onEdit, onDelete, onAddProject, onValidateProject,
+  onConfigProject, onDeleteProject,
 }: {
   sol: Solution; projects: Project[]; projectsLoading: boolean
   onEdit: (s: Solution) => void; onDelete: (s: Solution) => void
   onAddProject: (sol: Solution) => void
   onValidateProject: (sid: string, pid: string) => void
+  onConfigProject: (sid: string, pid: string) => void
+  onDeleteProject: (sid: string, pid: string, name: string) => void
 }) {
   const navigate = useNavigate()
+
+  // 倒序：按 created_at 降序排列
+  const sortedProjects = [...projects].sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  )
 
   return (
     <div className="group bg-surface-1 border border-border rounded-xl p-5 flex flex-col gap-3 hover:border-brand-600/50 transition-colors">
@@ -278,17 +303,19 @@ function SolutionCard({
               <div key={i} className="h-6 bg-surface-3 rounded animate-pulse" />
             ))}
           </div>
-        ) : projects.length === 0 ? (
+        ) : sortedProjects.length === 0 ? (
           <button onClick={() => onAddProject(sol)}
             className="w-full text-xs text-gray-600 hover:text-brand-400 py-2 text-left transition-colors">
             ＋ 添加第一个项目
           </button>
         ) : (
           <div className="space-y-0 max-h-40 overflow-y-auto">
-            {projects.map((p) => (
+            {sortedProjects.map((p) => (
               <ProjectMiniRow
                 key={p.id} project={p} solutionId={sol.id}
                 onValidate={(pid) => onValidateProject(sol.id, pid)}
+                onConfig={(pid) => onConfigProject(sol.id, pid)}
+                onDeleteProject={(pid, name) => onDeleteProject(sol.id, pid, name)}
               />
             ))}
           </div>
@@ -324,11 +351,14 @@ export default function SolutionsPage() {
   const [delLoading, setDelLoading] = useState(false)
   const [newProjSol, setNewProjSol] = useState<Solution | null>(null)
 
-  const [projectsMap,     setProjectsMap]     = useState<Record<string, Project[]>>({})
-  const [projectsLoading, setProjectsLoading] = useState(false)
+  const [projectsMap,        setProjectsMap]        = useState<Record<string, Project[]>>({})
+  const [projectsLoadingIds, setProjectsLoadingIds] = useState<Set<string>>(new Set())
 
   const [validateTarget,  setValidateTarget]  = useState<ValidateTarget | null>(null)
   const [validateLoading, setValidateLoading] = useState(false)
+
+  const [delProjTarget,  setDelProjTarget]  = useState<{ solutionId: string; projectId: string; name: string } | null>(null)
+  const [delProjLoading, setDelProjLoading] = useState(false)
 
   const [filterText, setFilterText] = useState('')
   const [sortBy,     setSortBy]     = useState<SortBy>('updated_at')
@@ -339,25 +369,38 @@ export default function SolutionsPage() {
     setProjectsMap(cached.projectsMap)
   }, [setSolutions])
 
-  /** 从 API 拉取完整数据，写入缓存，刷新视图 */
+  /** 从 API 拉取完整数据，写入缓存，刷新视图（逐 solution 增量更新） */
   const fetchFromApi = useCallback(async () => {
     const { solutions: sols } = await solutionsApi.list()
     setSolutions(sols)
 
-    const results = await Promise.allSettled(
-      sols.map((sol) =>
-        projectsApi.list(sol.id).then((r) => ({ id: sol.id, projects: r.projects }))
-      )
+    // 标记所有 solution 为加载中
+    setProjectsLoadingIds(new Set(sols.map((s) => s.id)))
+
+    const mapRef: Record<string, Project[]> = {}
+
+    await Promise.allSettled(
+      sols.map(async (sol) => {
+        try {
+          const r = await projectsApi.list(sol.id)
+          mapRef[sol.id] = r.projects
+        } catch {
+          mapRef[sol.id] = []
+        } finally {
+          // 每个 solution 数据到达就立即更新视图
+          setProjectsMap((prev) => ({ ...prev, [sol.id]: mapRef[sol.id] ?? [] }))
+          setProjectsLoadingIds((prev) => {
+            const next = new Set(prev)
+            next.delete(sol.id)
+            return next
+          })
+        }
+      })
     )
-    const map: Record<string, Project[]> = {}
-    for (const result of results) {
-      if (result.status === 'fulfilled') map[result.value.id] = result.value.projects
-    }
-    setProjectsMap(map)
 
     // 写入页面级缓存
-    setSolutionsListCache({ solutions: sols, projectsMap: map })
-    return { solutions: sols, projectsMap: map }
+    setSolutionsListCache({ solutions: sols, projectsMap: mapRef })
+    return { solutions: sols, projectsMap: mapRef }
   }, [setSolutions, setSolutionsListCache])
 
   /** 首次加载：优先读缓存，无缓存再拉 API */
@@ -398,14 +441,11 @@ export default function SolutionsPage() {
 
   /** 写操作后调用：清缓存并重新拉取 */
   const load = useCallback(async () => {
-    setProjectsLoading(true)
     clearSolutionsListCache()
     try {
       await fetchFromApi()
     } catch {
       toast.error('加载失败')
-    } finally {
-      setProjectsLoading(false)
     }
   }, [clearSolutionsListCache, fetchFromApi])
 
@@ -436,6 +476,21 @@ export default function SolutionsPage() {
       toast.error('启动验证失败')
     } finally {
       setValidateLoading(false)
+    }
+  }
+
+  const handleDeleteProject = async () => {
+    if (!delProjTarget) return
+    setDelProjLoading(true)
+    try {
+      await projectsApi.delete(delProjTarget.solutionId, delProjTarget.projectId)
+      toast.success('项目已删除')
+      setDelProjTarget(null)
+      load()
+    } catch {
+      toast.error('删除失败')
+    } finally {
+      setDelProjLoading(false)
     }
   }
 
@@ -559,11 +614,13 @@ export default function SolutionsPage() {
               key={sol.id}
               sol={sol}
               projects={projectsMap[sol.id] ?? []}
-              projectsLoading={projectsLoading && !(sol.id in projectsMap)}
+              projectsLoading={projectsLoadingIds.has(sol.id) && !(sol.id in projectsMap)}
               onEdit={(s) => { setEditing(s); setModalOpen(true) }}
               onDelete={setDelTarget}
               onAddProject={(s) => setNewProjSol(s)}
               onValidateProject={(sid, pid) => setValidateTarget({ solutionId: sid, projectId: pid })}
+              onConfigProject={(sid, pid) => navigate(`/solutions/${sid}/projects/${pid}/config`)}
+              onDeleteProject={(sid, pid, name) => setDelProjTarget({ solutionId: sid, projectId: pid, name })}
             />
           ))}
           <button
@@ -609,6 +666,17 @@ export default function SolutionsPage() {
         message="将对当前工作区代码执行全流程验证（安装依赖 → 测试 → Lint），是否继续？"
         confirmLabel="开始验证"
         loading={validateLoading}
+      />
+
+      <ConfirmDialog
+        open={!!delProjTarget}
+        onClose={() => setDelProjTarget(null)}
+        onConfirm={handleDeleteProject}
+        title="删除 Project"
+        message={`确定要删除「${delProjTarget?.name}」吗？此操作将级联删除工作区目录，不可恢复。`}
+        confirmLabel="删除"
+        danger
+        loading={delProjLoading}
       />
     </div>
   )
