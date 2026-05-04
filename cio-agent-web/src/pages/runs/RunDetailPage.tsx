@@ -83,7 +83,7 @@ function LiveLogView({ projectName, isActive }: { projectName: string; isActive:
       if (fileList.logs.length === 0) return
       const { data } = await apiClient.get<{ entries: LogEntry[] }>(
         `/logs/${fileList.logs[0].filename}`,
-        { params: { limit: 200 } },
+        { params: { limit: 2000 } },
       )
       setEntries(data.entries)
       setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
@@ -198,7 +198,7 @@ function LogViewerModal({ open, onClose, projectName }: {
     if (!selectedFile) return
     setContentLoading(true)
     apiClient
-      .get<{ entries: LogEntry[] }>(`/logs/${selectedFile}`, { params: { limit: 1000 } })
+      .get<{ entries: LogEntry[] }>(`/logs/${selectedFile}`, { params: { limit: 50000 } })
       .then((r) => {
         setEntries(r.data.entries)
         setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
@@ -208,8 +208,8 @@ function LogViewerModal({ open, onClose, projectName }: {
   }, [selectedFile])
 
   return (
-    <Modal open={open} onClose={onClose} title={`完整日志 — ${projectName}`} width="xl">
-      <div className="flex h-[70vh] min-h-[400px]">
+    <Modal open={open} onClose={onClose} title={`完整日志 — ${projectName}`} fullscreen>
+      <div className="flex flex-1 min-h-0 h-full">
         {/* File list */}
         <div className="w-48 shrink-0 border-r border-border overflow-y-auto p-2 space-y-1">
           {filesLoading ? (

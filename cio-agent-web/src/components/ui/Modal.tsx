@@ -9,6 +9,8 @@ interface ModalProps {
   width?: 'sm' | 'md' | 'lg' | 'xl'
   /** If true, clicking backdrop does not close */
   persistent?: boolean
+  /** If true, modal fills the entire screen */
+  fullscreen?: boolean
 }
 
 const widthCls = {
@@ -25,6 +27,7 @@ export default function Modal({
   children,
   width = 'md',
   persistent = false,
+  fullscreen = false,
 }: ModalProps) {
   const overlayRef = useRef<HTMLDivElement>(null)
 
@@ -49,7 +52,7 @@ export default function Modal({
   return createPortal(
     <div
       ref={overlayRef}
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      className={`fixed inset-0 z-50 flex items-center justify-center ${fullscreen ? '' : 'p-4'}`}
       onClick={(e) => {
         if (!persistent && e.target === overlayRef.current) onClose()
       }}
@@ -60,9 +63,11 @@ export default function Modal({
       {/* Panel */}
       <div
         className={`
-          relative w-full ${widthCls[width]}
-          bg-surface-1 border border-border rounded-2xl shadow-2xl
-          flex flex-col max-h-[90vh]
+          relative w-full
+          ${fullscreen
+            ? 'h-full rounded-none border-0'
+            : `${widthCls[width]} max-h-[90vh] rounded-2xl border border-border`}
+          bg-surface-1 shadow-2xl flex flex-col
         `}
         style={{ animation: 'modalIn 0.18s cubic-bezier(0.34,1.56,0.64,1) both' }}
       >
@@ -81,7 +86,7 @@ export default function Modal({
         </div>
 
         {/* Body */}
-        <div className="overflow-y-auto flex-1">
+        <div className={`flex-1 min-h-0 ${fullscreen ? 'overflow-hidden flex flex-col' : 'overflow-y-auto'}`}>
           {children}
         </div>
       </div>
