@@ -3,14 +3,13 @@ import react from '@vitejs/plugin-react'
 import path from 'path'
 import http from 'http'
 
-// Backend runs on the same host — use loopback to avoid going through the
-// public IP (cio.fhir.store → 43.132.224.225) and any associated NAT.
+// Backend runs on the same machine — use loopback instead of the public IP
+// (cio.fhir.store → 182.147.234.76) to avoid going through the network stack.
 const BACKEND = 'http://127.0.0.1:1576'
 
 // No keepalive: uvicorn closes connections immediately after responding, which
-// causes "socket hang up" when Node tries to reuse a pooled socket that the
-// backend has already shut down. On loopback, each TCP handshake is < 1 ms so
-// there is no meaningful cost to creating a fresh connection per request.
+// races against Node reusing a pooled socket and causes "socket hang up".
+// A fresh TCP connection per request eliminates this entirely.
 const backendAgent = new http.Agent({ keepAlive: false })
 
 export default defineConfig({
