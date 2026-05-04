@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import toast from 'react-hot-toast'
 import { knowledgeApi } from '../../api/knowledge'
 import { solutionsApi } from '../../api/solutions'
@@ -148,15 +148,44 @@ function DocListItem({
 
 // ─── 右侧：文档详情面板 ───────────────────────────────────────────────────────
 
-interface DocDetailPanelProps {
-  doc:         KnowledgeDocument | null
-  solutions:   Solution[]
-  projectsMap: Record<UUID, Project[]>
-  onSaved:     () => void
-  onDeleted:   () => void
+/** 从缓存的 bindingIndex 直接派生绑定列表，无需 API 调用 */
+function deriveBindingsFromIndex(
+  docId: UUID,
+  bindingIndex: Map<UUID, { solutionIds: Set<UUID>; projectIds: Set<UUID> }>,
+  solutions: Solution[],
+  projectsMap: Record<UUID, Project[]>,
+): BindingWithLabel[] {
+  const entry = bindingIndex.get(docId)
+  if (!entry) return []
+  const found: BindingWithLabel[] = []
+  for (const solId of entry.solutionIds) {
+    const sol = solutions.find((s) => s.id === solId)
+    if (sol) found.push({ id: `sol::${solId}`, doc_id: docId, scope_type: 'solution', scope_id: solId, label: `Solution: ${sol.name}` })
+  }
+  for (const projId of entry.projectIds) {
+    for (const sol of solutions) {
+      const proj = (projectsMap[sol.id] ?? []).find((p) => p.id === projId)
+      if (proj) {
+        found.push({ id: `proj::${projId}`, doc_id: docId, scope_type: 'project', scope_id: projId, label: `${sol.name} / ${proj.name}` })
+        break
+      }
+    }
+  }
+  return found
 }
 
-function DocDetailPanel({ doc, solutions, projectsMap, onSaved, onDeleted }: DocDetailPanelProps) {
+interface DocDetailPanelProps {
+  doc:               KnowledgeDocument | null
+  solutions:         Solution[]
+  projectsMap:       Record<UUID, Project[]>
+  bindingIndex:      Map<UUID, { solutionIds: Set<UUID>; projectIds: Set<UUID> }>
+  bindingIndexReady: boolean
+  onSaved:           () => void
+  onDeleted:         () => void
+  onBindingChange:   (docId: UUID, action: 'add' | 'remove', scopeType: ScopeType, scopeId: UUID) => void
+}
+
+function DocDetailPanel({ doc, solutions, projectsMap, bindingIndex, bindingIndexReady, onSaved, onDeleted, onBindingChange }: DocDetailPanelProps) {
   const [editMode,    setEditMode]    = useState(false)
   const [editTitle,   setEditTitle]   = useState('')
   const [editContent, setEditContent] = useState('')
@@ -172,16 +201,27 @@ function DocDetailPanel({ doc, solutions, projectsMap, onSaved, onDeleted }: Doc
   const [unbindTarget, setUnbindTarget] = useState<BindingWithLabel | null>(null)
   const [unbinding,    setUnbinding]    = useState(false)
 
+  // 文档切换时重置表单状态
   useEffect(() => {
-    if (!doc) { setBindings([]); return }
+    if (!doc) return
     setEditTitle(doc.title)
     setEditContent(doc.content ?? '')
     setEditMode(false)
     setBindSolId('')
     setBindProjId('')
     setBindType('solution')
-    loadBindings(doc.id)
   }, [doc?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 文档切换或 bindingIndex 更新时刷新绑定列表（优先用缓存索引，避免 O(n×m) API 调用）
+  useEffect(() => {
+    if (!doc) { setBindings([]); return }
+    if (bindingIndexReady) {
+      setBindings(deriveBindingsFromIndex(doc.id, bindingIndex, solutions, projectsMap))
+      setBindingsLoading(false)
+    } else {
+      loadBindings(doc.id)
+    }
+  }, [doc?.id, bindingIndex]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadBindings = useCallback(async (docId: UUID) => {
     setBindingsLoading(true)
@@ -248,7 +288,23 @@ function DocDetailPanel({ doc, solutions, projectsMap, onSaved, onDeleted }: Doc
       toast.success('绑定成功')
       setBindSolId('')
       setBindProjId('')
-      loadBindings(doc.id)
+      // 直接更新本地状态，无需重新拉取所有绑定
+      let label = ''
+      if (bindType === 'solution') {
+        const sol = solutions.find((s) => s.id === scopeId)
+        label = `Solution: ${sol?.name ?? scopeId}`
+      } else {
+        for (const sol of solutions) {
+          const proj = (projectsMap[sol.id] ?? []).find((p) => p.id === scopeId)
+          if (proj) { label = `${sol.name} / ${proj.name}`; break }
+        }
+      }
+      const newBinding: BindingWithLabel = {
+        id: `${bindType === 'solution' ? 'sol' : 'proj'}::${scopeId}`,
+        doc_id: doc.id, scope_type: bindType, scope_id: scopeId, label,
+      }
+      setBindings((prev) => [...prev, newBinding])
+      onBindingChange(doc.id, 'add', bindType, scopeId)
     } catch { toast.error('绑定失败（可能已绑定）') }
     finally { setBinding(false) }
   }
@@ -260,8 +316,10 @@ function DocDetailPanel({ doc, solutions, projectsMap, onSaved, onDeleted }: Doc
       const record = await knowledgeApi.bind(doc.id, { scope_type: unbindTarget.scope_type, scope_id: unbindTarget.scope_id })
       await knowledgeApi.unbind(record.id)
       toast.success('已解除绑定')
+      // 直接从本地状态移除，无需重新拉取所有绑定
+      setBindings((prev) => prev.filter((b) => b.id !== unbindTarget!.id))
+      onBindingChange(doc.id, 'remove', unbindTarget.scope_type, unbindTarget.scope_id)
       setUnbindTarget(null)
-      loadBindings(doc.id)
     } catch { toast.error('解绑失败，请刷新后重试'); setUnbindTarget(null) }
     finally { setUnbinding(false) }
   }
@@ -488,8 +546,8 @@ export default function KnowledgePage() {
   const [treeLoading, setTreeLoading] = useState(true)
 
   // bindingIndex: docId -> { solutionIds: Set, projectIds: Set }
-  const [bindingIndex, setBindingIndex] = useState<Map<UUID, { solutionIds: Set<UUID>; projectIds: Set<UUID> }>>(new Map())
-  const bindingIndexBuilt = useRef(false)
+  const [bindingIndex,      setBindingIndex]      = useState<Map<UUID, { solutionIds: Set<UUID>; projectIds: Set<UUID> }>>(new Map())
+  const [bindingIndexReady, setBindingIndexReady] = useState(false)
 
   /** 从序列化缓存恢复 bindingIndex Map */
   const restoreBindingIndex = useCallback((cache: Record<UUID, { solutionIds: UUID[]; projectIds: UUID[] }>) => {
@@ -498,7 +556,7 @@ export default function KnowledgePage() {
       map.set(docId, { solutionIds: new Set(val.solutionIds), projectIds: new Set(val.projectIds) })
     }
     setBindingIndex(map)
-    bindingIndexBuilt.current = true
+    setBindingIndexReady(true)
   }, [])
 
   /** 序列化 bindingIndex 并写入缓存 */
@@ -542,7 +600,7 @@ export default function KnowledgePage() {
     )
 
     setBindingIndex(index)
-    bindingIndexBuilt.current = true
+    setBindingIndexReady(true)
     persistBindingIndex(index)
   }, [persistBindingIndex])
 
@@ -621,7 +679,7 @@ export default function KnowledgePage() {
   const handleRefresh = useCallback(async () => {
     setRefreshing(true)
     clearKnowledgeListCache()
-    bindingIndexBuilt.current = false
+    setBindingIndexReady(false)
     try {
       await Promise.all([loadDocs(true), loadTree(true)])
       toast.success('数据已更新')
@@ -631,6 +689,30 @@ export default function KnowledgePage() {
       setRefreshing(false)
     }
   }, [clearKnowledgeListCache, loadDocs, loadTree])
+
+  /** 绑定/解绑后更新父组件的 bindingIndex（避免重新全量拉取 API） */
+  const handleBindingChange = useCallback((
+    docId: UUID,
+    action: 'add' | 'remove',
+    scopeType: ScopeType,
+    scopeId: UUID,
+  ) => {
+    setBindingIndex((prev) => {
+      const next = new Map(prev)
+      const entry = next.get(docId) ?? { solutionIds: new Set<UUID>(), projectIds: new Set<UUID>() }
+      const updated = { solutionIds: new Set(entry.solutionIds), projectIds: new Set(entry.projectIds) }
+      if (action === 'add') {
+        if (scopeType === 'solution') updated.solutionIds.add(scopeId)
+        else updated.projectIds.add(scopeId)
+      } else {
+        if (scopeType === 'solution') updated.solutionIds.delete(scopeId)
+        else updated.projectIds.delete(scopeId)
+      }
+      next.set(docId, updated)
+      persistBindingIndex(next)
+      return next
+    })
+  }, [persistBindingIndex])
 
   const handleDocDeleted = () => {
     setSelected(null)
@@ -745,8 +827,11 @@ export default function KnowledgePage() {
           doc={selected}
           solutions={solutions}
           projectsMap={projectsMap}
+          bindingIndex={bindingIndex}
+          bindingIndexReady={bindingIndexReady}
           onSaved={handleDocSaved}
           onDeleted={handleDocDeleted}
+          onBindingChange={handleBindingChange}
         />
       </div>
 

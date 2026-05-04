@@ -48,6 +48,7 @@ const SOLUTIONS_LIST_KEY    = 'cio_page_solutions_list'
 const SOLUTION_DETAIL_KEY   = 'cio_page_solution_detail_'
 const PROJECT_DETAIL_KEY    = 'cio_page_project_detail_'
 const PROJECT_RUNS_KEY      = 'cio_page_project_runs_'
+const PROJECT_SUMMARY_KEY   = 'cio_page_project_summary_'
 const KNOWLEDGE_LIST_KEY    = 'cio_page_knowledge_list'
 const KNOWLEDGE_BINDING_KEY = 'cio_page_knowledge_bindings'
 
@@ -223,6 +224,12 @@ export interface KnowledgeListCache {
   docs: KnowledgeDocument[]
 }
 
+/** Project Summary 缓存 */
+export interface ProjectSummaryCache {
+  content: string
+  exists: boolean
+}
+
 /** Knowledge 绑定索引缓存（解析后的 bindingIndex） */
 export interface KnowledgeBindingCache {
   /** docId -> { solutionIds, projectIds } 序列化存储 */
@@ -348,6 +355,20 @@ export function useDataCache() {
     )
   }, [])
 
+  // ── 页面级缓存：Project Summary ───────────────────────────────────────────
+
+  const getProjectSummaryCache = useCallback((pid: UUID): ProjectSummaryCache | null => {
+    return readPageCache<ProjectSummaryCache>(`${PROJECT_SUMMARY_KEY}${pid}`)
+  }, [])
+
+  const setProjectSummaryCache = useCallback((pid: UUID, data: ProjectSummaryCache) => {
+    writePageCache(`${PROJECT_SUMMARY_KEY}${pid}`, data)
+  }, [])
+
+  const clearProjectSummaryCache = useCallback((pid: UUID) => {
+    clearPageCache(`${PROJECT_SUMMARY_KEY}${pid}`)
+  }, [])
+
   // ── 页面级缓存：Knowledge 文档列表 ────────────────────────────────────────
 
   const getKnowledgeListCache = useCallback((): KnowledgeListCache | null => {
@@ -401,6 +422,10 @@ export function useDataCache() {
     getKnowledgeListCache,
     setKnowledgeListCache,
     clearKnowledgeListCache,
+    // Project Summary
+    getProjectSummaryCache,
+    setProjectSummaryCache,
+    clearProjectSummaryCache,
     // Knowledge 绑定索引
     getKnowledgeBindingCache,
     setKnowledgeBindingCache,

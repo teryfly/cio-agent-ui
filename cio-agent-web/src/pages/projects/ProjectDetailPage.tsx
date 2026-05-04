@@ -73,18 +73,33 @@ function RunRow({ run, onClick }: { run: RunSummary; onClick: () => void }) {
 
 /* ── Project Summary Panel ───────────────────────────────────────────────── */
 
-function ProjectSummaryPanel({ solutionId, projectId }: { solutionId: string; projectId: string }) {
+function ProjectSummaryPanel({
+  solutionId, projectId, refreshSignal = 0,
+}: { solutionId: string; projectId: string; refreshSignal?: number }) {
   const [content,  setContent]  = useState<string>('')
   const [exists,   setExists]   = useState(false)
   const [loading,  setLoading]  = useState(true)
   const [expanded, setExpanded] = useState(false)
+  const { getProjectSummaryCache, setProjectSummaryCache } = useDataCache()
 
   useEffect(() => {
+    setLoading(true)
+    const cached = getProjectSummaryCache(projectId)
+    if (cached) {
+      setContent(cached.content)
+      setExists(cached.exists)
+      setLoading(false)
+      return
+    }
     projectsApi.getSummary(solutionId, projectId)
-      .then((d) => { setContent(d.content); setExists(d.exists) })
+      .then((d) => {
+        setContent(d.content)
+        setExists(d.exists)
+        setProjectSummaryCache(projectId, { content: d.content, exists: d.exists })
+      })
       .catch(() => {})
       .finally(() => setLoading(false))
-  }, [solutionId, projectId])
+  }, [solutionId, projectId, refreshSignal]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading) return <div className="h-12 bg-surface-2 rounded-lg animate-pulse" />
   if (!exists || !content) return null
@@ -121,6 +136,7 @@ export default function ProjectDetailPage() {
   const {
     getProjectDetailCache, setProjectDetailCache, clearProjectDetailCache,
     getProjectRunsCache, setProjectRunsCache, clearProjectRunsCache,
+    clearProjectSummaryCache,
   } = useDataCache()
 
   const [project,         setProject]         = useState<Project | null>(null)
@@ -131,6 +147,7 @@ export default function ProjectDetailPage() {
   const [validateConfirm, setValidateConfirm] = useState(false)
   const [validateLoading, setValidateLoading] = useState(false)
   const [statusFilter,    setStatusFilter]    = useState<string>('all')
+  const [summaryRefresh,  setSummaryRefresh]  = useState(0)
 
   const sid = solutionId!
   const pid = projectId!
@@ -180,11 +197,13 @@ export default function ProjectDetailPage() {
       .finally(() => setRunsLoading(false))
   }, [pid, statusFilter]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  /** 手动刷新（project 元数据 + runs） */
+  /** 手动刷新（project 元数据 + runs + summary） */
   const handleRefresh = useCallback(async () => {
     setRunsRefreshing(true)
     clearProjectDetailCache(pid)
     clearProjectRunsCache(pid)
+    clearProjectSummaryCache(pid)
+    setSummaryRefresh((s) => s + 1)
     try {
       await Promise.all([
         fetchProjectFromApi(),
@@ -195,7 +214,7 @@ export default function ProjectDetailPage() {
     } finally {
       setRunsRefreshing(false)
     }
-  }, [pid, statusFilter, clearProjectDetailCache, clearProjectRunsCache, fetchProjectFromApi, fetchRunsFromApi])
+  }, [pid, statusFilter, clearProjectDetailCache, clearProjectRunsCache, clearProjectSummaryCache, fetchProjectFromApi, fetchRunsFromApi])
 
   const goToRunPage = (variant: 'auto' | 'new' | 'secondary') => {
     navigate(`/solutions/${sid}/projects/${pid}/run?variant=${variant}`)
@@ -279,7 +298,7 @@ export default function ProjectDetailPage() {
 
       {/* Project summary */}
       <div className="mb-5">
-        <ProjectSummaryPanel solutionId={sid} projectId={pid} />
+        <ProjectSummaryPanel solutionId={sid} projectId={pid} refreshSignal={summaryRefresh} />
       </div>
 
       {/* Run history */}
