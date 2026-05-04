@@ -11,6 +11,9 @@ export const authApi = {
   me: () =>
     apiClient.get<User>('/auth/me').then((r) => r.data),
 
+  refresh: () =>
+    apiClient.post<LoginResponse>('/auth/refresh').then((r) => r.data),
+
   init: (data: RegisterRequest) =>
     apiClient.post<User & { message: string }>('/admin/init', data).then((r) => r.data),
 
