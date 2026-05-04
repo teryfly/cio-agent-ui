@@ -3,7 +3,10 @@ import react from '@vitejs/plugin-react'
 import path from 'path'
 import http from 'http'
 
-const BACKEND = 'http://cio.fhir.store:1576'
+// Backend runs on the same host — use loopback to avoid hairpin-NAT through
+// the public IP (cio.fhir.store → 43.132.224.225), which causes unreliable
+// packet ordering and intermittent "socket hang up" errors.
+const BACKEND = 'http://127.0.0.1:1576'
 
 // Shared keep-alive agent: reuses TCP connections across proxy requests.
 // Free sockets are destroyed after 3 s so the pool always evicts them before
@@ -51,6 +54,18 @@ export default defineConfig({
         proxyTimeout: 120_000,
         configure: (proxy) => {
           proxy.on('error', (err, req, res) => {
+            // Retry once on stale keepalive socket errors (socket hang up / ECONNRESET).
+            // These happen when the backend closes an idle connection just as the proxy
+            // reuses it — the retry opens a fresh socket and always succeeds.
+            const isStaleSocket =
+              err.message === 'socket hang up' ||
+              (err as NodeJS.ErrnoException).code === 'ECONNRESET'
+            if (isStaleSocket && !(req as any)._proxyRetried && !res.headersSent) {
+              ;(req as any)._proxyRetried = true
+              proxy.web(req, res)
+              return
+            }
+
             console.error(`[proxy] ${req.method} ${req.url} → ${err.message}`)
             // Send a proper error response so the browser gets a real HTTP error
             // instead of a connection reset (which shows as a network error with no status).
