@@ -170,10 +170,16 @@ export default function Sidebar() {
                 Admin
               </span>
             </div>
-            <NavItem to="/admin/users"     icon="👥" label="用户管理" />
-            <NavItem to="/admin/config"    icon="⚙" label="系统配置" />
-            <NavItem to="/admin/logs"      icon="📋" label="日志" />
-            <NavItem to="/admin/workspace" icon="📁" label="工作区" />
+            <NavItem to="/admin/users"       icon="👥" label="用户管理" />
+            <NavItem to="/admin/config"      icon="⚙" label="系统配置" />
+            <NavItem to="/admin/logs"        icon="📋" label="日志" />
+            <NavItem to="/admin/workspace"   icon="📁" label="工作区" />
+            <NavItem to="/admin/cdts"        icon="📑" label="CDT 文档" />
+            <NavItem to="/admin/checkpoints" icon="🔖" label="检查点" />
+            <NavItem to="/admin/history"     icon="📜" label="运行历史" />
+            <NavItem to="/admin/summary"     icon="📝" label="执行摘要" />
+            <NavItem to="/admin/validation"  icon="✅" label="验证报告" />
+            <NavItem to="/admin/cicd"        icon="🚀" label="CI/CD" />
           </>
         )}
       </div>

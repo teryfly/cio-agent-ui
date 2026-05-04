@@ -20,6 +20,12 @@ import UsersPage          from '../pages/admin/UsersPage'
 import ConfigPage         from '../pages/admin/ConfigPage'
 import LogsPage           from '../pages/admin/LogsPage'
 import WorkspacePage      from '../pages/admin/WorkspacePage'
+import CDTsPage           from '../pages/admin/CDTsPage'
+import CheckpointsPage    from '../pages/admin/CheckpointsPage'
+import HistoryPage        from '../pages/admin/HistoryPage'
+import SummaryPage        from '../pages/admin/SummaryPage'
+import ValidationPage     from '../pages/admin/ValidationPage'
+import CICDPage           from '../pages/admin/CICDPage'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const token = useAuthStore((s) => s.token)
@@ -70,10 +76,16 @@ export const router = createBrowserRouter([
         path: 'admin',
         element: <RequireAdmin><Navigate to="/admin/users" replace /></RequireAdmin>,
       },
-      { path: 'admin/users',     element: <RequireAdmin><UsersPage /></RequireAdmin> },
-      { path: 'admin/config',    element: <RequireAdmin><ConfigPage /></RequireAdmin> },
-      { path: 'admin/logs',      element: <RequireAdmin><LogsPage /></RequireAdmin> },
-      { path: 'admin/workspace', element: <RequireAdmin><WorkspacePage /></RequireAdmin> },
+      { path: 'admin/users',       element: <RequireAdmin><UsersPage /></RequireAdmin> },
+      { path: 'admin/config',      element: <RequireAdmin><ConfigPage /></RequireAdmin> },
+      { path: 'admin/logs',        element: <RequireAdmin><LogsPage /></RequireAdmin> },
+      { path: 'admin/workspace',   element: <RequireAdmin><WorkspacePage /></RequireAdmin> },
+      { path: 'admin/cdts',        element: <RequireAdmin><CDTsPage /></RequireAdmin> },
+      { path: 'admin/checkpoints', element: <RequireAdmin><CheckpointsPage /></RequireAdmin> },
+      { path: 'admin/history',     element: <RequireAdmin><HistoryPage /></RequireAdmin> },
+      { path: 'admin/summary',     element: <RequireAdmin><SummaryPage /></RequireAdmin> },
+      { path: 'admin/validation',  element: <RequireAdmin><ValidationPage /></RequireAdmin> },
+      { path: 'admin/cicd',        element: <RequireAdmin><CICDPage /></RequireAdmin> },
     ],
   },
 
