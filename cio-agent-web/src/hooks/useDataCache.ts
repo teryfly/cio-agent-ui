@@ -1,19 +1,19 @@
 /**
  * useDataCache — 全局数据缓存 Hook
- * 在首次登录/刷新时预热 solution/project/knowledge 关系缓存到 localStorage
+ * 在首次登录/刷新时预热 solution/project 关系缓存到 localStorage
  * 提供快速读取和按需更新接口
  *
  * v2 新增：各页面专用缓存（solutions list、solution detail、project detail、knowledge list）
  * 统一策略：首次加载从 API 拉取写入缓存，下次从缓存读取，手动刷新图标触发强制更新。
+ *
+ * NOTE: Knowledge 数据（docs、bindings）不在全局预热中请求，仅在 KnowledgePage 按需加载。
  */
 import { useCallback } from 'react'
 import { solutionsApi } from '../api/solutions'
 import { projectsApi  } from '../api/projects'
-import { knowledgeApi } from '../api/knowledge'
-import { runsApi      } from '../api/runs'
 import { useAppStore  } from '../store/appStore'
 import type {
-  Solution, Project, KnowledgeDocument,
+  Solution, Project,
   SolutionDetail, RunSummary,
   UUID,
 } from '../api/types'
@@ -83,13 +83,6 @@ function clearPageCache(key: string) {
 export interface CachedData {
   solutions:   Solution[]
   projectsMap: Record<UUID, Project[]>
-  knowledgeDocs: KnowledgeDocument[]
-  knowledgeBindings: Array<{
-    docId: UUID
-    scopeType: 'solution' | 'project'
-    scopeId: UUID
-    label: string
-  }>
   updatedAt: number
 }
 
@@ -134,54 +127,7 @@ async function fetchAndCache(): Promise<CachedData> {
     }
   }
 
-  const { documents: knowledgeDocs } = await knowledgeApi.list()
-  const knowledgeBindings: CachedData['knowledgeBindings'] = []
-
-  await Promise.allSettled(
-    solutions.map((sol) =>
-      limit(async () => {
-        try {
-          const { documents } = await knowledgeApi.listBySolution(sol.id)
-          for (const doc of documents) {
-            knowledgeBindings.push({
-              docId: doc.id,
-              scopeType: 'solution',
-              scopeId: sol.id,
-              label: `Solution: ${sol.name}`,
-            })
-          }
-        } catch { /* ignore */ }
-      })
-    )
-  )
-
-  await Promise.allSettled(
-    solutions.flatMap((sol) =>
-      (projectsMap[sol.id] ?? []).map((proj) =>
-        limit(async () => {
-          try {
-            const { documents } = await knowledgeApi.listByProject(sol.id, proj.id, false)
-            for (const doc of documents) {
-              knowledgeBindings.push({
-                docId: doc.id,
-                scopeType: 'project',
-                scopeId: proj.id,
-                label: `${sol.name} / ${proj.name}`,
-              })
-            }
-          } catch { /* ignore */ }
-        })
-      )
-    )
-  )
-
-  const cached: CachedData = {
-    solutions,
-    projectsMap,
-    knowledgeDocs,
-    knowledgeBindings,
-    updatedAt: Date.now(),
-  }
+  const cached: CachedData = { solutions, projectsMap, updatedAt: Date.now() }
   writeCache(cached)
   return cached
 }
@@ -189,7 +135,13 @@ async function fetchAndCache(): Promise<CachedData> {
 async function getCacheOrFetch(): Promise<CachedData> {
   const cached = readCache()
   if (cached) {
-    fetchAndCache().catch(() => {})
+    // Only background-refresh when cache is in the last 20% of its TTL,
+    // not on every call — prevents burst of concurrent /knowledge/ requests
+    // on every page navigation that overwhelms the backend (→ ECONNRESET).
+    const age = Date.now() - cached.updatedAt
+    if (age > CACHE_TTL * 0.8) {
+      fetchAndCache().catch(() => {})
+    }
     return cached
   }
   return fetchAndCache()
@@ -288,12 +240,6 @@ export function useDataCache() {
         [solutionId]: updater(cached.projectsMap[solutionId] ?? []),
       },
     })
-  }, [])
-
-  const patchKnowledge = useCallback((updater: (docs: KnowledgeDocument[]) => KnowledgeDocument[]) => {
-    const cached = readCache()
-    if (!cached) return
-    writeCache({ ...cached, knowledgeDocs: updater(cached.knowledgeDocs) })
   }, [])
 
   // ── 页面级缓存：Solutions 列表 ────────────────────────────────────────────
@@ -401,7 +347,6 @@ export function useDataCache() {
     getCache,
     patchSolutions,
     patchProjects,
-    patchKnowledge,
     // Solutions 列表页
     getSolutionsListCache,
     setSolutionsListCache,
