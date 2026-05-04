@@ -11,6 +11,7 @@
 import { useCallback } from 'react'
 import { solutionsApi } from '../api/solutions'
 import { projectsApi  } from '../api/projects'
+import { authApi      } from '../api/auth'
 import { useAppStore  } from '../store/appStore'
 import type {
   Solution, Project,
@@ -210,6 +211,7 @@ export function useDataCache() {
 
   const invalidateAndRefresh = useCallback(async () => {
     clearCache()
+    await authApi.refreshAndUpdate()
     try {
       const data = await fetchAndCache()
       setSolutions(data.solutions)

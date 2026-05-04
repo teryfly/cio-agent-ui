@@ -1,4 +1,5 @@
 import { apiClient } from './client'
+import { useAuthStore } from '../store/authStore'
 import type { User, LoginRequest, LoginResponse, RegisterRequest } from './types'
 
 export const authApi = {
@@ -16,6 +17,14 @@ export const authApi = {
 
   init: (data: RegisterRequest) =>
     apiClient.post<User & { message: string }>('/admin/init', data).then((r) => r.data),
+
+  /** Refresh the token and persist the new one to the store. Silently ignores errors. */
+  refreshAndUpdate: async (): Promise<void> => {
+    try {
+      const res = await authApi.refresh()
+      useAuthStore.getState().setToken(res.access_token)
+    } catch { /* ignore — caller proceeds with existing token */ }
+  },
 
   health: async (): Promise<{ status: string; db: string }> => {
     // Use native fetch (not apiClient) since /health is outside /api/v1 prefix.
